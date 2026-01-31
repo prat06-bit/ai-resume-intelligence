@@ -1,0 +1,3 @@
+We are looking for a Machine Learning Engineer with experience in Python,
+Deep Learning, NLP, FastAPI, Docker, and AWS.
+Knowledge of databases like PostgreSQL is a plus.

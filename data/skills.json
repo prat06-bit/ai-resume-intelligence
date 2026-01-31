@@ -1,0 +1,32 @@
+{
+  "programming": [
+    "python",
+    "java",
+    "c++",
+    "javascript"
+  ],
+  "machine_learning": [
+    "machine learning",
+    "deep learning",
+    "nlp",
+    "data science",
+    "scikit-learn"
+  ],
+  "web_development": [
+    "html",
+    "css",
+    "react",
+    "fastapi",
+    "flask"
+  ],
+  "databases": [
+    "mysql",
+    "postgresql",
+    "mongodb"
+  ],
+  "tools": [
+    "git",
+    "docker",
+    "aws"
+  ]
+}

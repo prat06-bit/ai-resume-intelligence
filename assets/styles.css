@@ -1,0 +1,21 @@
+:root {
+  --h1: 44px;
+  --h2: 34px;
+  --h3: 22px;
+  --p: 16px;
+  --section-pad: 70px;
+}
+
+.hero h1 { font-size:var(--h1); }
+.hero p { font-size:18px; }
+
+.section h2 { font-size:var(--h2); }
+.section { padding:var(--section-pad) 40px; }
+
+.card h3 { font-size:var(--h3); }
+.card p { font-size:var(--p); }
+
+.btn {
+  padding:14px 28px;
+  font-size:15px;
+}
