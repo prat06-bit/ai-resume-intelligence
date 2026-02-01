@@ -1,7 +1,9 @@
-streamlit
+streamlit>=1.31,<2.0
 sentence-transformers
 scikit-learn
 numpy
 plotly
-umap-learn
 pdfplumber
+scipy
+umap-learn==0.5.5
+
