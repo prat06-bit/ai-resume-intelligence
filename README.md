@@ -25,4 +25,4 @@ Tech Stack
 Use Cases
 -Job seekers validating resume readiness before applying
 -Recruiters comparing candidates using explainable signals
--Career coaches providing data-backed resume feedback
+-Career coaches providing data-backed resume feedback.
