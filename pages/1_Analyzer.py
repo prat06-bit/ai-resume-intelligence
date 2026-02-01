@@ -176,26 +176,49 @@ with tab2:
     show_density = st.checkbox("Show skill density contours", value=True)
 
     skills = list(similarity.keys())
-    embeddings = np.array(matcher.embed(skills))
 
+    # --- SAFETY: minimal data guard ---
+    if len(skills) < 3:
+        st.warning("Not enough skills for semantic projection (need ≥ 3).")
+        st.stop()
+
+    # --- Embed + sanitize ---
+    raw_embeddings = matcher.embed(skills)
+    embeddings = np.array(raw_embeddings, dtype=np.float32)
+
+    if not np.isfinite(embeddings).all():
+        st.error("Embedding instability detected. Falling back to PCA.")
+        HAS_UMAP_SAFE = False
+    else:
+        HAS_UMAP_SAFE = HAS_UMAP
+
+    # --- PCA (always safe) ---
     pca = PCA(n_components=2, random_state=42)
     coords_pca = pca.fit_transform(embeddings)
 
-    if HAS_UMAP:
-        reducer = umap.UMAP(
-            n_neighbors=min(8, len(skills)-1),
-            min_dist=0.25,
-            metric="cosine",
-            random_state=42
-        )
-        coords_umap = reducer.fit_transform(embeddings)
+    # --- UMAP (only if SAFE) ---
+    if HAS_UMAP_SAFE:
+        try:
+            reducer = umap.UMAP(
+                n_neighbors=min(8, len(skills) - 1),
+                min_dist=0.25,
+                metric="cosine",
+                random_state=42
+            )
+            coords_umap = reducer.fit_transform(embeddings)
+        except Exception:
+            st.warning("UMAP failed numerically. Using PCA instead.")
+            coords_umap = coords_pca.copy()
+            animate = False
     else:
         coords_umap = coords_pca.copy()
+        animate = False
 
+    # --- Clustering ---
     n_clusters = min(4, len(skills))
-    labels = KMeans(n_clusters=n_clusters, n_init=10, random_state=42)\
-        .fit_predict(embeddings)
+    labels = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit_predict(embeddings)
 
+    # --- Plot ---
     fig = go.Figure()
 
     for cid in range(n_clusters):
@@ -206,33 +229,49 @@ with tab2:
             mode="markers+text",
             text=[skills[i] for i in idx],
             textposition="top center",
+            marker=dict(size=14),
             name=f"Cluster {cid}"
         ))
 
+    # --- Density contours (PCA only = stable) ---
     if show_density:
-        xy = np.vstack([coords_pca[:,0], coords_pca[:,1]])
+        xy = np.vstack([coords_pca[:, 0], coords_pca[:, 1]])
         kde = gaussian_kde(xy)
-        xg, yg = np.mgrid[
-            coords_pca[:,0].min():coords_pca[:,0].max():100j,
-            coords_pca[:,1].min():coords_pca[:,1].max():100j
+
+        xgrid, ygrid = np.mgrid[
+            coords_pca[:, 0].min():coords_pca[:, 0].max():100j,
+            coords_pca[:, 1].min():coords_pca[:, 1].max():100j
         ]
-        z = kde(np.vstack([xg.ravel(), yg.ravel()])).reshape(xg.shape)
+
+        z = kde(np.vstack([xgrid.ravel(), ygrid.ravel()])).reshape(xgrid.shape)
+
         fig.add_trace(go.Contour(
-            x=xg[:,0], y=yg[0], z=z,
-            opacity=0.3, showscale=False
+            x=xgrid[:, 0],
+            y=ygrid[0],
+            z=z,
+            opacity=0.25,
+            showscale=False
         ))
 
+    # --- Animation ---
     if animate:
-        fig.frames = [go.Frame(
-            data=[go.Scatter(x=coords_umap[:,0], y=coords_umap[:,1])],
-            name="UMAP"
-        )]
+        fig.frames = [
+            go.Frame(
+                data=[go.Scatter(
+                    x=coords_umap[:, 0],
+                    y=coords_umap[:, 1]
+                )],
+                name="UMAP"
+            )
+        ]
+
         fig.update_layout(
             updatemenus=[dict(
+                type="buttons",
                 buttons=[dict(
                     label="▶ Morph PCA → UMAP",
                     method="animate",
-                    args=[["UMAP"], {"frame": {"duration": 1200}}]
+                    args=[["UMAP"], {"frame": {"duration": 1200, "redraw": True}}]
                 )]
             )]
         )
@@ -240,7 +279,8 @@ with tab2:
     fig.update_layout(
         height=540,
         xaxis=dict(visible=False),
-        yaxis=dict(visible=False)
+        yaxis=dict(visible=False),
+        plot_bgcolor="white"
     )
 
     st.plotly_chart(fig, use_container_width=True)
