@@ -177,12 +177,12 @@ with tab2:
 
     skills = list(similarity.keys())
 
-    # --- SAFETY: minimal data guard ---
+    
     if len(skills) < 3:
         st.warning("Not enough skills for semantic projection (need ≥ 3).")
         st.stop()
 
-    # --- Embed + sanitize ---
+    
     raw_embeddings = matcher.embed(skills)
     embeddings = np.array(raw_embeddings, dtype=np.float32)
 
@@ -192,11 +192,11 @@ with tab2:
     else:
         HAS_UMAP_SAFE = HAS_UMAP
 
-    # --- PCA (always safe) ---
+    
     pca = PCA(n_components=2, random_state=42)
     coords_pca = pca.fit_transform(embeddings)
 
-    # --- UMAP (only if SAFE) ---
+    
     if HAS_UMAP_SAFE:
         try:
             reducer = umap.UMAP(
@@ -214,11 +214,11 @@ with tab2:
         coords_umap = coords_pca.copy()
         animate = False
 
-    # --- Clustering ---
+    
     n_clusters = min(4, len(skills))
     labels = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit_predict(embeddings)
 
-    # --- Plot ---
+    
     fig = go.Figure()
 
     for cid in range(n_clusters):
@@ -233,7 +233,7 @@ with tab2:
             name=f"Cluster {cid}"
         ))
 
-    # --- Density contours (PCA only = stable) ---
+    
     if show_density:
         xy = np.vstack([coords_pca[:, 0], coords_pca[:, 1]])
         kde = gaussian_kde(xy)
@@ -253,7 +253,6 @@ with tab2:
             showscale=False
         ))
 
-    # --- Animation ---
     if animate:
         fig.frames = [
             go.Frame(
