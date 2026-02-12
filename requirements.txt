@@ -1,9 +1,10 @@
-streamlit>=1.31,<2.0
-sentence-transformers
-scikit-learn
+streamlit
 numpy
+scikit-learn
+sentence-transformers
+shap
+matplotlib
 plotly
-pdfplumber
 scipy
-umap-learn==0.5.5
-
+pdfplumber
+umap-learn

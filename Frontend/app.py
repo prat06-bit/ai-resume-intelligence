@@ -1,18 +1,20 @@
 import streamlit as st
 from datetime import datetime
+import sys
+import os
 
-# ==================================================
-# PAGE CONFIG
-# ==================================================
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+
+
 st.set_page_config(
     page_title="AI Resume Intelligence",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# ==================================================
-# HIDE STREAMLIT DEFAULT UI
-# ==================================================
 st.markdown(
     """
     <style>
@@ -24,9 +26,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# GLOBAL STYLES (REFINED, CALMER, MORE PROFESSIONAL)
-# ==================================================
+
 st.markdown(
     """
 <style>
@@ -207,9 +207,7 @@ footer {
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# NAVBAR
-# ==================================================
+
 st.markdown(
     """
 <div class="navbar">
@@ -224,9 +222,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# HERO
-# ==================================================
+
 st.markdown(
     """
 <div class="hero">
@@ -242,9 +238,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# WHO IS THIS FOR
-# ==================================================
+
 st.markdown(
     """
 <div class="section">
@@ -268,9 +262,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# HOW IT WORKS
-# ==================================================
 st.markdown(
     """
 <div id="how" class="section">
@@ -294,9 +285,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# WHY THIS IS DIFFERENT
-# ==================================================
 st.markdown(
     """
 <div id="different" class="section">
@@ -314,9 +302,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# CTA
-# ==================================================
 st.markdown(
     """
 <div class="cta">
@@ -331,9 +316,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# FOOTER
-# ==================================================
 year = datetime.now().year
 st.markdown(
     f"""
@@ -345,9 +327,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==================================================
-# PAGE SWITCH
-# ==================================================
 page = st.query_params.get("page")
 if page == "analyzer":
     st.switch_page("pages/1_Analyzer.py")

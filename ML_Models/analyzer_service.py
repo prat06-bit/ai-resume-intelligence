@@ -1,6 +1,6 @@
-from backend.skill_extractor import extract_skills, load_skills
-from backend.semantic_matcher import semantic_similarity
-from backend.scoring import (
+from ML_Models.skill_extractor import extract_skills, load_skills
+from ML_Models.semantic_matcher import semantic_similarity
+from ML_Models.scoring import (
     skill_coverage_score,
     experience_signal,
     final_match_score,

@@ -1,4 +1,3 @@
-# backend/skill_clustering.py
 
 from sklearn.cluster import KMeans
 from sentence_transformers import SentenceTransformer

@@ -1,24 +1,17 @@
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
-import re
 
 class SemanticMatcher:
     def __init__(self, model_name="all-MiniLM-L6-v2"):
         self.model = SentenceTransformer(model_name)
 
-    # ---------- CORE EMBEDDING ----------
     def embed(self, texts):
-        """
-        Public embedding method expected by analyzer.py
-        """
         return self.model.encode(
             texts,
             normalize_embeddings=True,
             show_progress_bar=False
         )
 
-    # ---------- SKILL MATCHING ----------
     def match_skills(self, resume_skills, jd_skills):
         if not resume_skills or not jd_skills:
             return {}
@@ -29,14 +22,14 @@ class SemanticMatcher:
         res_emb = self.embed(resume_list)
         jd_emb = self.embed(jd_list)
 
-        sim = cosine_similarity(res_emb, jd_emb)
+        sim = cosine_similarity(jd_emb, res_emb)
 
+        # JD skill → best resume alignment
         return {
-            resume_list[i]: float(sim[i].max())
-            for i in range(len(resume_list))
+            jd_list[i]: float(sim[i].max())
+            for i in range(len(jd_list))
         }
 
-    # ---------- SECTION-AWARE EMBEDDING ----------
     def embed_sections(self, resume_text):
         sections = {
             "experience": "",
@@ -58,6 +51,6 @@ class SemanticMatcher:
                 sections[current] += line + " "
 
         return {
-            sec: self.embed([text])[0] if text.strip() else None
-            for sec, text in sections.items()
+            sec: self.embed([txt])[0] if txt.strip() else None
+            for sec, txt in sections.items()
         }
