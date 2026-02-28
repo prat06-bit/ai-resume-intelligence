@@ -1,28 +1,107 @@
-import numpy as np
+from typing import Dict, Set, List, Tuple
 
-def compute_score(similarity: dict) -> tuple:
+try:
+    from .skill_extractor import extract_skills, extract_skills_by_section
+except ImportError:
+    from ML_Models.skill_extractor import extract_skills, extract_skills_by_section
+
+
+# ─────────────────────────────────────────────
+# Role-based section weights
+# ─────────────────────────────────────────────
+
+ROLE_WEIGHTS = {
+    "software_engineer":   {"projects": 0.4, "experience": 0.35, "skills": 0.15, "education": 0.1},
+    "backend_engineer":    {"projects": 0.35, "experience": 0.4, "skills": 0.15, "education": 0.1},
+    "frontend_engineer":   {"projects": 0.45, "experience": 0.3, "skills": 0.15, "education": 0.1},
+    "fullstack_engineer":  {"projects": 0.4, "experience": 0.35, "skills": 0.15, "education": 0.1},
+    "ml_engineer":         {"projects": 0.35, "experience": 0.35, "skills": 0.2,  "education": 0.1},
+    "data_scientist":      {"projects": 0.3,  "experience": 0.35, "skills": 0.2,  "education": 0.15},
+    "data_analyst":        {"projects": 0.3,  "experience": 0.35, "skills": 0.2,  "education": 0.15},
+    "devops_engineer":     {"projects": 0.3,  "experience": 0.45, "skills": 0.15, "education": 0.1},
+    "cloud_engineer":      {"projects": 0.3,  "experience": 0.45, "skills": 0.15, "education": 0.1},
+    "student":             {"projects": 0.5,  "experience": 0.15, "skills": 0.2,  "education": 0.15},
+    "intern":              {"projects": 0.5,  "experience": 0.15, "skills": 0.2,  "education": 0.15},
+}
+
+DEFAULT_ROLE_WEIGHTS = {"projects": 0.4, "experience": 0.35, "skills": 0.15, "education": 0.1}
+
+
+def compute_score(similarity: Dict[str, float]) -> Tuple[float, str]:
+    """
+    Takes a dict of {skill: similarity_score (0.0–1.0)}
+    Returns (overall_score_percent, confidence_label)
+
+    Usage in 1_Analyzer.py:
+        skill_score, confidence = compute_score(similarity)
+    """
     if not similarity:
-        return 0.0, 0.0
+        return 0.0, "Low"
 
-    scores = np.array(list(similarity.values()))
-    mean_score = scores.mean() * 100
-    coverage = (scores >= 0.55).mean() * 100
+    values = list(similarity.values())
 
-    return round(mean_score, 2), round(coverage, 2)
+    # Weighted: matched skills (≥0.55) count more than weak ones
+    strong   = [v for v in values if v >= 0.55]
+    weak     = [v for v in values if v < 0.55]
 
-def role_weighted_score(section_sims: dict, role: str) -> float:
-    weights = {
-        "ml_engineer": {"projects": 0.5, "experience": 0.4, "skills": 0.1},
-        "data_scientist": {"projects": 0.45, "experience": 0.35, "skills": 0.2},
-        "software_engineer": {"experience": 0.5, "projects": 0.4, "skills": 0.1},
-        "student": {"projects": 0.6, "skills": 0.2, "experience": 0.2},
-    }
+    strong_avg = sum(strong) / len(strong) if strong else 0.0
+    weak_avg   = sum(weak)   / len(weak)   if weak   else 0.0
+    coverage   = len(strong) / len(values)
 
-    w = weights.get(role, weights["ml_engineer"])
-    score = 0.0
+    # Final skill score blends match quality + coverage
+    raw_score = (strong_avg * 0.5) + (coverage * 0.35) + (weak_avg * 0.15)
+    score_pct = round(raw_score * 100, 2)
 
-    for sec, weight in w.items():
-        if section_sims.get(sec) is not None:
-            score += section_sims[sec] * weight
+    # Confidence based on coverage ratio
+    if coverage >= 0.75:
+        confidence = "High"
+    elif coverage >= 0.45:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
 
-    return round(score * 100, 2)
+    return score_pct, confidence
+
+
+def role_weighted_score(section_similarities: Dict[str, float], role: str) -> float:
+    """
+    Takes section cosine similarities and role string.
+    Returns a weighted final score (0–100).
+
+    Usage in 1_Analyzer.py:
+        final_score = role_weighted_score(section_similarities, role)
+    """
+    weights = ROLE_WEIGHTS.get(role, DEFAULT_ROLE_WEIGHTS)
+
+    total_weight = 0.0
+    weighted_sum = 0.0
+
+    for section, sim in section_similarities.items():
+        w = weights.get(section, 0.1)
+        weighted_sum  += sim * w
+        total_weight  += w
+
+    if total_weight == 0:
+        return 0.0
+
+    return round((weighted_sum / total_weight) * 100, 2)
+
+
+# ─────────────────────────────────────────────
+# Extra helpers (used by analyze_resume_vs_jd)
+# ─────────────────────────────────────────────
+
+def coverage_score(resume_skills: Set[str], jd_required_skills: Set[str]) -> float:
+    """Simple set-based coverage: matched / jd_required."""
+    if not jd_required_skills:
+        return 1.0
+    matched = resume_skills & jd_required_skills
+    return round(len(matched) / len(jd_required_skills), 4)
+
+
+def get_skill_gaps(resume_skills: Set[str], jd_required_skills: Set[str]) -> List[str]:
+    return sorted(list(jd_required_skills - resume_skills))
+
+
+def get_matched_skills(resume_skills: Set[str], jd_required_skills: Set[str]) -> List[str]:
+    return sorted(list(resume_skills & jd_required_skills))

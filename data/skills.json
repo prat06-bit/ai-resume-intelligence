@@ -1,32 +1,77 @@
 {
-  "programming": [
-    "python",
-    "java",
-    "c++",
-    "javascript"
-  ],
-  "machine_learning": [
-    "machine learning",
-    "deep learning",
-    "nlp",
-    "data science",
-    "scikit-learn"
-  ],
-  "web_development": [
-    "html",
-    "css",
-    "react",
-    "fastapi",
-    "flask"
-  ],
-  "databases": [
-    "mysql",
-    "postgresql",
-    "mongodb"
-  ],
-  "tools": [
-    "git",
-    "docker",
-    "aws"
-  ]
+  "python": ["python", "python3", "py"],
+  "java": ["java", "java 8", "java 11", "java 17"],
+  "javascript": ["javascript", "js", "es6", "es2015"],
+  "typescript": ["typescript", "ts"],
+  "cpp": ["c++", "cpp", "c plus plus"],
+  "go": ["golang", "go lang", "go"],
+  "ruby": ["ruby", "ruby on rails", "rails"],
+  "php": ["php"],
+
+  "nodejs": ["node.js", "nodejs", "node js", "node"],
+  "express": ["express", "express.js", "expressjs"],
+  "flask": ["flask"],
+  "django": ["django", "django rest framework", "drf"],
+  "spring_boot": ["spring boot", "spring", "springboot"],
+  "fastapi": ["fastapi", "fast api"],
+  "nextjs": ["next.js", "nextjs", "next js"],
+  "reactjs": ["react", "react.js", "reactjs"],
+
+  "rest_api": ["rest api", "restful api", "rest", "restful", "api design", "api development"],
+  "graphql": ["graphql", "graph ql"],
+  "websocket": ["websocket", "web socket", "ws"],
+
+  "mysql": ["mysql", "my sql"],
+  "postgresql": ["postgresql", "postgres", "pg"],
+  "mongodb": ["mongodb", "mongo", "mongo db"],
+  "redis": ["redis", "redis cache"],
+  "sqlite": ["sqlite", "sqlite3"],
+  "elasticsearch": ["elasticsearch", "elastic search"],
+
+  "jwt": ["jwt", "json web token", "json web tokens"],
+  "oauth": ["oauth", "oauth2", "oauth 2.0", "openid"],
+  "authentication": ["authentication", "auth", "authorization"],
+  "encryption": ["encryption", "aes", "rsa", "cryptography"],
+  "security": ["security", "cybersecurity", "secure coding"],
+
+  "docker": ["docker", "dockerfile", "containerization", "containers"],
+  "kubernetes": ["kubernetes", "k8s", "kubectl"],
+  "git": ["git", "github", "gitlab", "version control"],
+  "cicd": ["ci/cd", "cicd", "ci cd", "continuous integration", "continuous deployment", "github actions", "jenkins"],
+  "aws": ["aws", "amazon web services", "ec2", "s3", "lambda"],
+  "gcp": ["gcp", "google cloud", "google cloud platform"],
+  "azure": ["azure", "microsoft azure"],
+  "linux": ["linux", "unix", "bash", "shell scripting"],
+
+  "microservices": ["microservices", "microservice", "micro services"],
+  "kafka": ["kafka", "apache kafka"],
+  "rabbitmq": ["rabbitmq", "rabbit mq", "message queue"],
+  "http": ["http", "https", "http protocol", "status codes"],
+
+  "postman": ["postman"],
+  "swagger": ["swagger", "openapi", "open api"],
+  "nginx": ["nginx"],
+  "vercel": ["vercel"],
+
+  "machine_learning": ["machine learning", "ml", "deep learning"],
+  "nlp": ["nlp", "natural language processing"],
+  "scikit_learn": ["scikit-learn", "sklearn"],
+  "tensorflow": ["tensorflow", "tf"],
+  "pytorch": ["pytorch", "torch"],
+  "numpy": ["numpy", "np"],
+  "pandas": ["pandas"],
+
+  "data_structures": ["data structures", "algorithms", "dsa", "data structures and algorithms"],
+  "system_design": ["system design", "scalable systems", "distributed systems"],
+  "pca": ["pca", "principal component analysis"],
+  "umap": ["umap"],
+
+  "html": ["html", "html5"],
+  "css": ["css", "css3", "tailwind", "tailwind css"],
+  "figma": ["figma"],
+
+  "streamlit": ["streamlit"],
+  "jupyter": ["jupyter", "jupyter notebook"],
+  "shap": ["shap"],
+  "mongodb_atlas": ["atlas", "mongodb atlas"]
 }
