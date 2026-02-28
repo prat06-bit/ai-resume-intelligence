@@ -114,8 +114,8 @@ section_similarities = {
 
 final_score = role_weighted_score(section_similarities, role)
 
-matched = {k: v for k, v in similarity.items() if v >= 0.55}
-missing = {k: v for k, v in similarity.items() if v < 0.55}
+matched = {k: v for k, v in similarity.items() if v >= 0.30}
+missing = {k: v for k, v in similarity.items() if v < 0.30}
 
 X_single = build_feature_vector(similarity, section_similarities)
 
@@ -169,7 +169,13 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "Skill Match", "Embeddings", "Ablation", "Roadmap"
 ])
 
-roadmap = None
+roadmap = generate_roadmap(
+    missing_skills=list(missing.keys()),
+    score=ml_score,
+    jd_text=jd_text,
+    resume_text=resume_text
+)
+
 with tab1:
     colA, colB = st.columns(2)
 
@@ -217,7 +223,6 @@ with tab1:
             "All required skills are reasonably covered. Focus on depth, impact, and clarity."
         )
     else:
-        # Sort by most missing first
         top_missing = sorted(
             missing.items(), key=lambda x: x[1]
         )[:6]
@@ -349,7 +354,7 @@ with tab2:
             updatemenus=[dict(
                 type="buttons",
                 buttons=[dict(
-                    label="▶ Morph PCA → UMAP",
+                    label=" Morph PCA → UMAP",
                     method="animate",
                     args=[["UMAP"], {"frame": {"duration": 1200, "redraw": True}}]
                 )]
@@ -479,15 +484,17 @@ with tab4:
         "A targeted roadmap showing what will most improve your resume’s alignment with this role."
     )
 
-    if roadmap is None or len(roadmap) == 0:
+    if not roadmap or len(roadmap) == 0:
         st.success(
-            "You are interview-ready. Focus on applying, interviewing, and refining impact."
+            "All required skills are covered. Focus on applying, interviewing, and refining impact."
         )
     else:
         for i, step in enumerate(roadmap, 1):
-            is_high = step["priority"] == "high"
-            priority_color = "#16a34a" if is_high else "#f59e0b"
-            priority_label = "High impact" if is_high else "Medium impact"
+            is_high   = step["priority"] == "high"
+            is_medium = step["priority"] == "medium"
+            priority_color = "#e5533d" if is_high else "#f59e0b" if is_medium else "#16a34a"
+            priority_label = "High priority" if is_high else "Medium priority" if is_medium else "Low priority"
+            why_text = step.get("why", "")
 
             st.markdown(
                 f"""
@@ -499,9 +506,9 @@ with tab4:
                     box-shadow:0 4px 14px rgba(0,0,0,0.04);
                     border-left:6px solid {priority_color};
                 ">
-                    <div style="display:flex; justify-content:space-between;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
                         <b style="font-size:16px;">
-                            Step {i}: Strengthen {step['skill'].title()}
+                            Step {i}: {step['skill'].replace('_', ' ').title()}
                         </b>
                         <span style="
                             font-size:12px;
@@ -514,20 +521,12 @@ with tab4:
                         </span>
                     </div>
 
-                    <div style="margin-top:10px; font-size:14px;">
+                    <div style="margin-top:10px; font-size:14px; color:#1f2937;">
                         {step['action']}
                     </div>
 
-                    <div style="
-                        margin-top:10px;
-                        font-size:12px;
-                        color:#6b7280;
-                    ">
-                        Why this matters: Improving this signal has a
-                        measurable impact on your overall match score.
-                    </div>
+                    {"<div style='margin-top:8px; font-size:12px; color:#6b7280; font-style:italic;'> " + why_text + "</div>" if why_text else ""}
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-

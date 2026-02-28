@@ -5,11 +5,6 @@ try:
 except ImportError:
     from ML_Models.skill_extractor import extract_skills, extract_skills_by_section
 
-
-# ─────────────────────────────────────────────
-# Role-based section weights
-# ─────────────────────────────────────────────
-
 ROLE_WEIGHTS = {
     "software_engineer":   {"projects": 0.4, "experience": 0.35, "skills": 0.15, "education": 0.1},
     "backend_engineer":    {"projects": 0.35, "experience": 0.4, "skills": 0.15, "education": 0.1},
@@ -28,19 +23,11 @@ DEFAULT_ROLE_WEIGHTS = {"projects": 0.4, "experience": 0.35, "skills": 0.15, "ed
 
 
 def compute_score(similarity: Dict[str, float]) -> Tuple[float, str]:
-    """
-    Takes a dict of {skill: similarity_score (0.0–1.0)}
-    Returns (overall_score_percent, confidence_label)
-
-    Usage in 1_Analyzer.py:
-        skill_score, confidence = compute_score(similarity)
-    """
     if not similarity:
         return 0.0, "Low"
 
     values = list(similarity.values())
 
-    # Weighted: matched skills (≥0.55) count more than weak ones
     strong   = [v for v in values if v >= 0.55]
     weak     = [v for v in values if v < 0.55]
 
@@ -48,11 +35,9 @@ def compute_score(similarity: Dict[str, float]) -> Tuple[float, str]:
     weak_avg   = sum(weak)   / len(weak)   if weak   else 0.0
     coverage   = len(strong) / len(values)
 
-    # Final skill score blends match quality + coverage
     raw_score = (strong_avg * 0.5) + (coverage * 0.35) + (weak_avg * 0.15)
     score_pct = round(raw_score * 100, 2)
 
-    # Confidence based on coverage ratio
     if coverage >= 0.75:
         confidence = "High"
     elif coverage >= 0.45:
@@ -64,13 +49,6 @@ def compute_score(similarity: Dict[str, float]) -> Tuple[float, str]:
 
 
 def role_weighted_score(section_similarities: Dict[str, float], role: str) -> float:
-    """
-    Takes section cosine similarities and role string.
-    Returns a weighted final score (0–100).
-
-    Usage in 1_Analyzer.py:
-        final_score = role_weighted_score(section_similarities, role)
-    """
     weights = ROLE_WEIGHTS.get(role, DEFAULT_ROLE_WEIGHTS)
 
     total_weight = 0.0
@@ -87,12 +65,7 @@ def role_weighted_score(section_similarities: Dict[str, float], role: str) -> fl
     return round((weighted_sum / total_weight) * 100, 2)
 
 
-# ─────────────────────────────────────────────
-# Extra helpers (used by analyze_resume_vs_jd)
-# ─────────────────────────────────────────────
-
 def coverage_score(resume_skills: Set[str], jd_required_skills: Set[str]) -> float:
-    """Simple set-based coverage: matched / jd_required."""
     if not jd_required_skills:
         return 1.0
     matched = resume_skills & jd_required_skills

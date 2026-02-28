@@ -10,16 +10,12 @@ def load_skills(path: str = "data/skills.json") -> Dict[str, Set[str]]:
 
 
 def extract_skills(text: str, skills_db: Dict[str, Set[str]]) -> Set[str]:
-    """
-    Extract canonical skill names from text using word-boundary regex.
-    Returns a set of canonical names e.g. {"python", "jwt", "docker"}
-    """
+
     text = text.lower()
     found = set()
 
     for canonical, variants in skills_db.items():
         for v in variants:
-            # Escape dots/special chars, use word boundaries
             pattern = r'\b' + re.escape(v.lower()) + r'\b'
             if re.search(pattern, text):
                 found.add(canonical)
@@ -32,10 +28,6 @@ def extract_skills_by_section(
     resume_sections: Dict[str, str],
     skills_db: Dict[str, Set[str]]
 ) -> Dict[str, Set[str]]:
-    """
-    Extract skills per resume section.
-    Returns: { "experience": {"python", ...}, "projects": {...}, ... }
-    """
     return {
         section_name: extract_skills(section_text, skills_db)
         for section_name, section_text in resume_sections.items()
@@ -43,9 +35,6 @@ def extract_skills_by_section(
 
 
 def parse_resume_sections(full_text: str) -> Dict[str, str]:
-    """
-    Heuristically split resume into named sections.
-    """
     section_headers = {
         "experience": ["work experience", "experience", "internship"],
         "projects":   ["projects", "project"],

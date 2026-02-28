@@ -54,7 +54,6 @@ body {
   color:var(--text);
 }
 
-/* ---------- NAVBAR ---------- */
 .navbar {
   position:fixed;
   inset:0 0 auto 0;
@@ -93,7 +92,6 @@ body {
   font-weight:600;
 }
 
-/* ---------- HERO ---------- */
 .hero {
   margin-top:110px;
   background:linear-gradient(135deg,var(--dark),var(--mid));
@@ -133,7 +131,6 @@ body {
   box-shadow:0 6px 18px rgba(0,0,0,.15);
 }
 
-/* ---------- SECTIONS ---------- */
 .section {
   max-width:1120px;
   margin:auto;
@@ -147,7 +144,6 @@ body {
   letter-spacing:-.02em;
 }
 
-/* ---------- CARDS ---------- */
 .grid {
   display:grid;
   grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
@@ -179,7 +175,6 @@ body {
   color:var(--muted);
 }
 
-/* ---------- CTA ---------- */
 .cta {
   background:linear-gradient(135deg,var(--dark),var(--light));
   padding:86px 70px;
@@ -194,7 +189,6 @@ body {
   letter-spacing:-.02em;
 }
 
-/* ---------- FOOTER ---------- */
 footer {
   text-align:center;
   padding:56px;
