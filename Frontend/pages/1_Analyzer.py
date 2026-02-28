@@ -127,21 +127,21 @@ for _ in range(80):
     x = np.clip(X_single + noise, 0, 1)
 
     score_proxy = (
-        0.4 * x[0] +   
-        0.3 * x[1] +   
-        0.2 * x[2] +   
-        0.1 * x[3]     
+        0.35 * x[0] +   
+        0.35 * x[1] +   
+        0.20 * x[2] +   
+        0.10 * x[3]     
     )
 
-    label = int(score_proxy >= 0.55)
+    label = int(score_proxy >= 0.35)
 
     X_train.append(x)
     y_train.append(label)
 
 if len(set(y_train)) < 2:
     
-    x_pos = np.clip(X_single + np.array([0.15, 0.2, 0.2, 0.15, 0.1]), 0, 1)
-    x_neg = np.clip(X_single - np.array([0.15, 0.2, 0.2, 0.15, 0.1]), 0, 1)
+    x_pos = np.clip(X_single + np.array([0.25, 0.3, 0.25, 0.25, 0.2]), 0, 1)
+    x_neg = np.clip(X_single - np.array([0.25, 0.3, 0.25, 0.25, 0.2]), 0, 1)
 
     X_train.extend([x_pos, x_neg])
     y_train.extend([1, 0])
@@ -155,14 +155,16 @@ y_train = np.array(y_train)
 ml_model = ResumeMatchModel()
 ml_model.fit(X_train, y_train)
 
-ml_score = ml_model.predict_proba(X_single.reshape(1, -1))[0] * 100
+matched_count = sum(1 for v in similarity.values() if v >= 0.30)
+total_jd      = len(similarity) if similarity else 1
 
+coverage_pct  = (matched_count / total_jd) * 100
+ml_score      = round((skill_score * 0.5) + (final_score * 0.3) + (coverage_pct * 0.2), 1)
 m1, m2, m3 = st.columns(3)
 m1.metric("Final Match Score", f"{ml_score:.1f}%")
 m2.metric("Matched Skills", len(matched))
 m3.metric("Missing Skills", len(missing))
-st.caption("Confidence derived from model explainability (SHAP)")
-
+st.caption(f"Confidence: {confidence} · Skill coverage: {matched_count}/{total_jd} JD skills matched")
 tab1, tab2, tab3, tab4 = st.tabs([
     "Skill Match", "Embeddings", "Ablation", "Roadmap"
 ])

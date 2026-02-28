@@ -17,11 +17,20 @@ class SemanticMatcher:
     def match_skills(self, resume_skills, jd_skills):
         """
         For each JD skill, find the best matching resume skill via cosine similarity.
-        
-        Applies a calibrated penalty so that semantically-close-but-not-same
-        skills don't inflate the score (e.g. 'flask' != 'spring_boot').
 
-        Returns: { jd_skill: score (0.0–1.0) }
+        Calibrated for all-MiniLM-L6-v2 where:
+          - Exact same skill   → ~0.99
+          - Same category      → ~0.65–0.80  (e.g. flask vs django)
+          - Related domain     → ~0.45–0.65  (e.g. python vs java)
+          - Unrelated          → ~0.10–0.40
+
+        Scoring tiers:
+          ≥ 0.80  → Exact / near-exact match          → full score
+          0.60–0.80 → Same skill family, light penalty → × 0.80
+          0.40–0.60 → Related but different            → × 0.55
+          < 0.40  → Unrelated / missing                → × 0.15
+
+        Target: 13 matched skills on a ~35% resume should give ~45–60% final score.
         """
         if not resume_skills or not jd_skills:
             return {}
@@ -32,7 +41,7 @@ class SemanticMatcher:
         res_emb = self.embed(resume_list)
         jd_emb  = self.embed(jd_list)
 
-        sim_matrix = cosine_similarity(jd_emb, res_emb)  # shape: (n_jd, n_resume)
+        sim_matrix = cosine_similarity(jd_emb, res_emb)  # (n_jd, n_resume)
 
         result = {}
         for i, jd_skill in enumerate(jd_list):
@@ -40,29 +49,32 @@ class SemanticMatcher:
             best_idx   = int(sim_matrix[i].argmax())
             best_match = resume_list[best_idx]
 
-            # ── Exact / near-exact match (same canonical name) ──────────
+            # Exact canonical match → never penalise
             if jd_skill == best_match:
                 result[jd_skill] = best_score
 
-            # ── Strong semantic match ────────────────────────────────────
-            elif best_score >= 0.85:
+            # Strong semantic match (same skill, different label)
+            elif best_score >= 0.80:
                 result[jd_skill] = best_score
 
-            # ── Moderate match — apply penalty ──────────────────────────
-            # Skills are related but not the same (e.g. flask vs django)
-            elif best_score >= 0.65:
-                result[jd_skill] = best_score * 0.65
+            # Same skill family — slight penalty
+            elif best_score >= 0.60:
+                result[jd_skill] = round(best_score * 0.80, 4)
 
-            # ── Weak / unrelated match — treat as missing ────────────────
+            # Related domain — moderate penalty
+            elif best_score >= 0.40:
+                result[jd_skill] = round(best_score * 0.55, 4)
+
+            # Unrelated / missing — treat as absent
             else:
-                result[jd_skill] = best_score * 0.3
+                result[jd_skill] = round(best_score * 0.15, 4)
 
         return result
 
     def embed_sections(self, resume_text):
         """
         Split resume into sections and embed each one.
-        Returns { section_name: embedding_vector }
+        Returns { section_name: embedding_vector | None }
         """
         sections = {
             "experience": [],
@@ -72,15 +84,13 @@ class SemanticMatcher:
         }
 
         current = None
-        section_order = ["experience", "projects", "skills", "education"]
 
         for line in resume_text.splitlines():
             l = line.lower().strip()
 
-            # Detect section header
             if any(kw in l for kw in ["work experience", "experience", "internship"]):
                 current = "experience"
-            elif any(kw in l for kw in ["project"]):
+            elif "project" in l:
                 current = "projects"
             elif any(kw in l for kw in ["technical skill", "skill", "technolog"]):
                 current = "skills"
@@ -91,11 +101,8 @@ class SemanticMatcher:
                 sections[current].append(line)
 
         embeddings = {}
-        for sec in section_order:
-            text = " ".join(sections[sec]).strip()
-            if text:
-                embeddings[sec] = self.embed([text])[0]
-            else:
-                embeddings[sec] = None
+        for sec, lines in sections.items():
+            text = " ".join(lines).strip()
+            embeddings[sec] = self.embed([text])[0] if text else None
 
         return embeddings
