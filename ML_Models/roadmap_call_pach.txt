@@ -1,0 +1,23 @@
+In 1_Analyzer.py, find:
+    roadmap = None
+
+Replace with:
+    roadmap = generate_roadmap(
+        missing_skills=list(missing.keys()),
+        score=ml_score,
+        jd_text=jd_text,
+        resume_text=resume_text
+    )
+
+──────────────────────────────────────────────────────
+Also update the Roadmap tab to show the "why" field.
+Find in tab4:
+    <div style="margin-top:10px; font-size:14px;">
+        {step['action']}
+    </div>
+
+Replace with:
+    <div style="margin-top:10px; font-size:14px;">
+        {step['action']}
+    </div>
+    { f'<div style="margin-top:6px; font-size:12px; color:#6b7280; font-style:italic;">{step["why"]}</div>' if step.get("why") else "" }
