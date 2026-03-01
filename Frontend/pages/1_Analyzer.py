@@ -175,7 +175,6 @@ roadmap = generate_roadmap(
     jd_text=jd_text,
     resume_text=resume_text
 )
-st.write(f"DEBUG: missing={list(missing.keys())}, roadmap_len={len(roadmap) if roadmap else 0}")
 
 with tab1:
     colA, colB = st.columns(2)
@@ -224,6 +223,7 @@ with tab1:
             "All required skills are reasonably covered. Focus on depth, impact, and clarity."
         )
     else:
+        # Sort by most missing first
         top_missing = sorted(
             missing.items(), key=lambda x: x[1]
         )[:6]
@@ -355,7 +355,7 @@ with tab2:
             updatemenus=[dict(
                 type="buttons",
                 buttons=[dict(
-                    label=" Morph PCA → UMAP",
+                    label="▶ Morph PCA → UMAP",
                     method="animate",
                     args=[["UMAP"], {"frame": {"duration": 1200, "redraw": True}}]
                 )]
@@ -495,39 +495,39 @@ with tab4:
             is_medium = step["priority"] == "medium"
             priority_color = "#e5533d" if is_high else "#f59e0b" if is_medium else "#16a34a"
             priority_label = "High priority" if is_high else "Medium priority" if is_medium else "Low priority"
-            why_text = step.get("why", "")
+            skill_label    = step["skill"].replace("_", " ").title()
+            action_text    = step.get("action", "")
+            why_text       = step.get("why", "")
 
-            st.markdown(
-                f"""
-                <div style="
-                    padding:18px;
-                    border-radius:16px;
-                    background:#ffffff;
-                    margin-bottom:14px;
-                    box-shadow:0 4px 14px rgba(0,0,0,0.04);
-                    border-left:6px solid {priority_color};
-                ">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <b style="font-size:16px;">
-                            Step {i}: {step['skill'].replace('_', ' ').title()}
-                        </b>
-                        <span style="
-                            font-size:12px;
-                            padding:4px 10px;
-                            border-radius:999px;
-                            background:{priority_color};
-                            color:white;
-                        ">
-                            {priority_label}
-                        </span>
-                    </div>
-
-                    <div style="margin-top:10px; font-size:14px; color:#1f2937;">
-                        {step['action']}
-                    </div>
-
-                    {"<div style='margin-top:8px; font-size:12px; color:#6b7280; font-style:italic;'> " + why_text + "</div>" if why_text else ""}
-                </div>
-                """,
-                unsafe_allow_html=True,
+            # Pre-build optional why block OUTSIDE the f-string to avoid rendering issues
+            why_html = (
+                f'<div style="margin-top:8px;font-size:12px;color:#6b7280;font-style:italic;">💡 {why_text}</div>'
+                if why_text else ""
             )
+
+            card_html = f"""
+            <div style="
+                padding:18px;
+                border-radius:16px;
+                background:#ffffff;
+                margin-bottom:14px;
+                box-shadow:0 4px 14px rgba(0,0,0,0.04);
+                border-left:6px solid {priority_color};
+            ">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <b style="font-size:16px;">Step {i}: {skill_label}</b>
+                    <span style="
+                        font-size:12px;
+                        padding:4px 10px;
+                        border-radius:999px;
+                        background:{priority_color};
+                        color:white;
+                    ">{priority_label}</span>
+                </div>
+                <div style="margin-top:10px;font-size:14px;color:#1f2937;">
+                    {action_text}
+                </div>
+                {why_html}
+            </div>
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
