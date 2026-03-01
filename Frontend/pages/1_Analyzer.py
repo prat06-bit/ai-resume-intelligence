@@ -175,6 +175,7 @@ roadmap = generate_roadmap(
     jd_text=jd_text,
     resume_text=resume_text
 )
+st.write(f"DEBUG: missing={list(missing.keys())}, roadmap_len={len(roadmap) if roadmap else 0}")
 
 with tab1:
     colA, colB = st.columns(2)
