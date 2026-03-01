@@ -11,10 +11,6 @@ def generate_roadmap(
     jd_text: str = "",
     resume_text: str = ""
 ) -> List[Dict]:
-    """
-    Dynamically generate personalized roadmap using Google Gemini (FREE).
-    Falls back to basic version if API unavailable.
-    """
     if not missing_skills:
         return []
 
@@ -37,7 +33,7 @@ def _gemini_roadmap(
         raise ValueError("GEMINI_API_KEY not set in environment variables.")
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")  # Free, fast model
+    model = genai.GenerativeModel("gemini-2.0-flash")  
 
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
 
@@ -78,13 +74,11 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
     response = model.generate_content(prompt)
     raw = response.text.strip()
 
-    # Strip markdown fences if model adds them
     raw = re.sub(r"^```(?:json)?", "", raw).strip()
     raw = re.sub(r"```$", "", raw).strip()
 
     steps = json.loads(raw)
 
-    # Validate structure
     validated = []
     for step in steps:
         if all(k in step for k in ("skill", "action", "priority")):
@@ -95,7 +89,6 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
                 "why":      step.get("why", "")
             })
 
-    # Sort: high → medium → low
     order = {"high": 0, "medium": 1, "low": 2}
     validated.sort(key=lambda x: order.get(x["priority"], 1))
     return validated
@@ -106,10 +99,8 @@ def _fallback_roadmap(
     score: float,
     jd_text: str = ""
 ) -> List[Dict]:
-    """Basic fallback if API unavailable."""
     roadmap  = []
     jd_lower = jd_text.lower() if jd_text else ""
-
     for skill in missing_skills:
         skill_clean = skill.replace("_", " ")
         mentions    = jd_lower.count(skill_clean.lower())
