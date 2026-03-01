@@ -5,9 +5,7 @@ from typing import List, Dict
 from dotenv import load_dotenv
 from google import genai
 
-# Load .env file automatically
 load_dotenv()
-
 
 def generate_roadmap(
     missing_skills: List[str],
@@ -23,7 +21,6 @@ def generate_roadmap(
         print(f"[roadmap] Gemini failed ({e}), using fallback.")
         return _fallback_roadmap(missing_skills, score, jd_text)
 
-
 def _gemini_roadmap(
     missing_skills: List[str],
     score: float,
@@ -35,7 +32,6 @@ def _gemini_roadmap(
     if not api_key:
         raise ValueError("GOOGLE_API_KEY not set in .env file.")
 
-    # New google-genai SDK syntax
     client = genai.Client(api_key=api_key)
 
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
@@ -75,13 +71,12 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
 ]"""
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.0-flash-lite",
         contents=prompt
     )
 
     raw = response.text.strip()
 
-    # Strip markdown fences if model adds them
     raw = re.sub(r"^```(?:json)?", "", raw).strip()
     raw = re.sub(r"```$", "", raw).strip()
 
@@ -100,7 +95,6 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
     order = {"high": 0, "medium": 1, "low": 2}
     validated.sort(key=lambda x: order.get(x["priority"], 1))
     return validated
-
 
 def _fallback_roadmap(
     missing_skills: List[str],
