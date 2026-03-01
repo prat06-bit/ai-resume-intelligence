@@ -3,9 +3,9 @@ import json
 import re
 from typing import List, Dict
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
 
-# Load .env file — works regardless of which terminal runs streamlit
+# Load .env file automatically
 load_dotenv()
 
 
@@ -31,12 +31,12 @@ def _gemini_roadmap(
     resume_text: str
 ) -> List[Dict]:
 
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not set.")
+        raise ValueError("GOOGLE_API_KEY not set in .env file.")
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")  # ✅ correct model name
+    # New google-genai SDK syntax
+    client = genai.Client(api_key=api_key)
 
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
 
@@ -74,7 +74,11 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
   }}
 ]"""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+    )
+
     raw = response.text.strip()
 
     # Strip markdown fences if model adds them
