@@ -2,7 +2,11 @@ import os
 import json
 import re
 from typing import List, Dict
+from dotenv import load_dotenv
 import google.generativeai as genai
+
+# Load .env file — works regardless of which terminal runs streamlit
+load_dotenv()
 
 
 def generate_roadmap(
@@ -13,7 +17,6 @@ def generate_roadmap(
 ) -> List[Dict]:
     if not missing_skills:
         return []
-
     try:
         return _gemini_roadmap(missing_skills, score, jd_text, resume_text)
     except Exception as e:
@@ -30,10 +33,10 @@ def _gemini_roadmap(
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not set in environment variables.")
+        raise ValueError("GEMINI_API_KEY not set.")
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")  
+    model = genai.GenerativeModel("gemini-2.0-flash")  # ✅ correct model name
 
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
 
@@ -74,6 +77,7 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
     response = model.generate_content(prompt)
     raw = response.text.strip()
 
+    # Strip markdown fences if model adds them
     raw = re.sub(r"^```(?:json)?", "", raw).strip()
     raw = re.sub(r"```$", "", raw).strip()
 
@@ -101,6 +105,7 @@ def _fallback_roadmap(
 ) -> List[Dict]:
     roadmap  = []
     jd_lower = jd_text.lower() if jd_text else ""
+
     for skill in missing_skills:
         skill_clean = skill.replace("_", " ")
         mentions    = jd_lower.count(skill_clean.lower())
