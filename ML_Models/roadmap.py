@@ -2,7 +2,7 @@ import os
 import json
 import re
 from typing import List, Dict
-import anthropic
+import google.generativeai as genai
 
 
 def generate_roadmap(
@@ -12,29 +12,32 @@ def generate_roadmap(
     resume_text: str = ""
 ) -> List[Dict]:
     """
-    Dynamically generate a personalized roadmap using Claude Haiku.
-    Fully context-aware: uses actual JD + resume to tailor every step.
-    Cost: ~$0.0005 per call (Claude Haiku, cheapest Anthropic model).
+    Dynamically generate personalized roadmap using Google Gemini (FREE).
+    Falls back to basic version if API unavailable.
     """
     if not missing_skills:
         return []
 
     try:
-        return _llm_roadmap(missing_skills, score, jd_text, resume_text)
+        return _gemini_roadmap(missing_skills, score, jd_text, resume_text)
     except Exception as e:
-        print(f"[roadmap] LLM failed ({e}), using fallback.")
+        print(f"[roadmap] Gemini failed ({e}), using fallback.")
         return _fallback_roadmap(missing_skills, score, jd_text)
 
 
-def _llm_roadmap(
+def _gemini_roadmap(
     missing_skills: List[str],
     score: float,
     jd_text: str,
     resume_text: str
 ) -> List[Dict]:
-    client = anthropic.Anthropic(
-        api_key=os.environ.get("ANTHROPIC_API_KEY")
-    )
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not set in environment variables.")
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-1.5-flash")  # Free, fast model
 
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
 
@@ -46,15 +49,15 @@ CANDIDATE RESUME (excerpt):
 JOB DESCRIPTION:
 {jd_text[:1200] if jd_text else "Not provided"}
 
-MISSING SKILLS (skills required by JD but not found in resume):
+MISSING SKILLS (required by JD but not found in resume):
 {skills_list}
 
 CURRENT MATCH SCORE: {score:.1f}%
 
-For each missing skill above, write a specific, actionable improvement step that:
+For each missing skill, write a specific actionable improvement step that:
 1. References the candidate's ACTUAL existing projects/tech stack from their resume
-2. Uses context from the ACTUAL job description requirements
-3. Gives a concrete, implementable action (not generic advice)
+2. Uses context from the ACTUAL job description
+3. Gives a concrete implementable action (not generic advice)
 4. Explains WHY this skill matters for THIS specific role
 
 Priority rules:
@@ -62,23 +65,18 @@ Priority rules:
 - "medium" = mentioned in JD + candidate has partial/related experience
 - "low"    = preferred/bonus skill in JD
 
-Respond ONLY with a valid JSON array. No markdown, no extra text:
+Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences:
 [
   {{
     "skill": "exact_skill_name_from_list",
     "action": "Specific 1-2 sentence action referencing their actual projects and JD context",
-    "priority": "high|medium|low",
+    "priority": "high or medium or low",
     "why": "One sentence: why this skill matters for THIS specific role"
   }}
 ]"""
 
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",  # Cheapest model ~$0.25/M tokens
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    raw = response.content[0].text.strip()
+    response = model.generate_content(prompt)
+    raw = response.text.strip()
 
     # Strip markdown fences if model adds them
     raw = re.sub(r"^```(?:json)?", "", raw).strip()
@@ -86,7 +84,7 @@ Respond ONLY with a valid JSON array. No markdown, no extra text:
 
     steps = json.loads(raw)
 
-    # Validate and clean each step
+    # Validate structure
     validated = []
     for step in steps:
         if all(k in step for k in ("skill", "action", "priority")):
@@ -100,7 +98,6 @@ Respond ONLY with a valid JSON array. No markdown, no extra text:
     # Sort: high → medium → low
     order = {"high": 0, "medium": 1, "low": 2}
     validated.sort(key=lambda x: order.get(x["priority"], 1))
-
     return validated
 
 
@@ -109,8 +106,8 @@ def _fallback_roadmap(
     score: float,
     jd_text: str = ""
 ) -> List[Dict]:
-    """Simple fallback if API unavailable — uses JD context extraction."""
-    roadmap = []
+    """Basic fallback if API unavailable."""
+    roadmap  = []
     jd_lower = jd_text.lower() if jd_text else ""
 
     for skill in missing_skills:
@@ -118,7 +115,6 @@ def _fallback_roadmap(
         mentions    = jd_lower.count(skill_clean.lower())
         priority    = "high" if mentions >= 2 else "medium" if mentions == 1 else "low"
 
-        # Extract JD sentence mentioning this skill
         jd_context = ""
         for line in jd_text.splitlines():
             if skill_clean.lower() in line.lower():
@@ -126,9 +122,9 @@ def _fallback_roadmap(
                 break
 
         action = (
-            f"Add a project demonstrating {skill_clean}. "
-            + (f"The JD mentions: '{jd_context[:100]}'. " if jd_context else "")
-            + "Include specific tools, metrics, and outcomes in your resume bullet."
+            f"Build a project demonstrating {skill_clean}."
+            + (f" The JD mentions: '{jd_context[:100]}'." if jd_context else "")
+            + " Include specific tools, metrics, and outcomes in your resume bullet."
         )
 
         roadmap.append({
