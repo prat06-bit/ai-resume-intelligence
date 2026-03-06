@@ -1,11 +1,19 @@
 import os
 import json
 import re
+import requests
 from typing import List, Dict
 from dotenv import load_dotenv
-from google import genai
 
 load_dotenv()
+
+OLLAMA_URL  = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL   = "llama-3.1-8b-instant"  # free on Groq
+
+
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_roadmap(
     missing_skills: List[str],
@@ -15,28 +23,31 @@ def generate_roadmap(
 ) -> List[Dict]:
     if not missing_skills:
         return []
+
+    # 1. Try local Ollama first (free, unlimited, fast on your GPU)
     try:
-        return _gemini_roadmap(missing_skills, score, jd_text, resume_text)
+        return _ollama_roadmap(missing_skills, score, jd_text, resume_text)
     except Exception as e:
-        print(f"[roadmap] Gemini failed ({e}), using fallback.")
-        return _fallback_roadmap(missing_skills, score, jd_text)
+        print(f"[roadmap] Ollama failed ({e}), trying Groq...")
 
-def _gemini_roadmap(
-    missing_skills: List[str],
-    score: float,
-    jd_text: str,
-    resume_text: str
-) -> List[Dict]:
+    # 2. Try Groq free tier
+    if GROQ_API_KEY:
+        try:
+            return _groq_roadmap(missing_skills, score, jd_text, resume_text)
+        except Exception as e:
+            print(f"[roadmap] Groq failed ({e}), using fallback.")
+    else:
+        print("[roadmap] GROQ_API_KEY not set, using fallback.")
 
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY not set in .env file.")
+    # 3. Rule-based fallback (no AI needed)
+    return _fallback_roadmap(missing_skills, score, jd_text)
 
-    client = genai.Client(api_key=api_key)
 
+# ── Shared prompt builder ─────────────────────────────────────────────────────
+
+def _build_prompt(missing_skills, score, jd_text, resume_text) -> str:
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
-
-    prompt = f"""You are an expert technical career coach helping a candidate improve their resume.
+    return f"""You are an expert technical career coach helping a candidate improve their resume.
 
 CANDIDATE RESUME (excerpt):
 {resume_text[:800] if resume_text else "Not provided"}
@@ -70,18 +81,13 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
   }}
 ]"""
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash-lite",
-        contents=prompt
-    )
 
-    raw = response.text.strip()
-
-    raw = re.sub(r"^```(?:json)?", "", raw).strip()
+def _parse_and_validate(raw: str) -> List[Dict]:
+    """Strip markdown fences, parse JSON, validate fields, sort by priority."""
+    raw = re.sub(r"^```(?:json)?", "", raw.strip()).strip()
     raw = re.sub(r"```$", "", raw).strip()
 
     steps = json.loads(raw)
-
     validated = []
     for step in steps:
         if all(k in step for k in ("skill", "action", "priority")):
@@ -96,11 +102,61 @@ Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences
     validated.sort(key=lambda x: order.get(x["priority"], 1))
     return validated
 
-def _fallback_roadmap(
-    missing_skills: List[str],
-    score: float,
-    jd_text: str = ""
-) -> List[Dict]:
+
+# ── Ollama (local) ────────────────────────────────────────────────────────────
+
+def _ollama_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
+    """Call local Ollama — runs on your RTX 4050, completely free."""
+    prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
+
+    response = requests.post(
+        f"{OLLAMA_URL}/api/chat",
+        json={
+            "model": OLLAMA_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 1500,
+            }
+        },
+        timeout=120  # local inference can take a moment
+    )
+    response.raise_for_status()
+
+    raw = response.json()["message"]["content"]
+    return _parse_and_validate(raw)
+
+
+# ── Groq (free cloud fallback) ────────────────────────────────────────────────
+
+def _groq_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
+    """Call Groq free tier — llama3.1-8b-instant, no credit card needed."""
+    prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
+
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 1500,
+        },
+        timeout=30
+    )
+    response.raise_for_status()
+
+    raw = response.json()["choices"][0]["message"]["content"]
+    return _parse_and_validate(raw)
+
+
+# ── Rule-based fallback (zero dependencies) ───────────────────────────────────
+
+def _fallback_roadmap(missing_skills, score, jd_text="") -> List[Dict]:
     roadmap  = []
     jd_lower = jd_text.lower() if jd_text else ""
 

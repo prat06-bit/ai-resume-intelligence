@@ -499,9 +499,8 @@ with tab4:
             action_text    = step.get("action", "")
             why_text       = step.get("why", "")
 
-            # Pre-build optional why block OUTSIDE the f-string to avoid rendering issues
             why_html = (
-                f'<div style="margin-top:8px;font-size:12px;color:#6b7280;font-style:italic;">💡 {why_text}</div>'
+                f'<div style="margin-top:8px;font-size:12px;color:#6b7280;font-style:italic;"> {why_text}</div>'
                 if why_text else ""
             )
 
