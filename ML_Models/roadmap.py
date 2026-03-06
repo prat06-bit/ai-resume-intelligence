@@ -2,15 +2,15 @@ import os
 import json
 import re
 import requests
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 
-OLLAMA_URL  = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_URL   = os.environ.get("OLLAMA_URL",   "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "dolphin3:8b")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL   = "llama-3.1-8b-instant"  # free on Groq
+GROQ_MODEL   = "llama-3.1-8b-instant"
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -24,30 +24,48 @@ def generate_roadmap(
     if not missing_skills:
         return []
 
-    # 1. Try local Ollama first (free, unlimited, fast on your GPU)
-    try:
-        return _ollama_roadmap(missing_skills, score, jd_text, resume_text)
-    except Exception as e:
-        print(f"[roadmap] Ollama failed ({e}), trying Groq...")
+    if _ollama_is_running():
+        try:
+            result = _ollama_roadmap(missing_skills, score, jd_text, resume_text)
+            if result:
+                print(f"[roadmap] ✅ Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
+                return result
+        except Exception as e:
+            print(f"[roadmap] ⚠️  Ollama error: {e}")
+    else:
+        print(f"[roadmap] ⚠️  Ollama not reachable at {OLLAMA_URL}")
 
-    # 2. Try Groq free tier
     if GROQ_API_KEY:
         try:
-            return _groq_roadmap(missing_skills, score, jd_text, resume_text)
+            result = _groq_roadmap(missing_skills, score, jd_text, resume_text)
+            if result:
+                print(f"[roadmap] ✅ Groq fallback generated {len(result)} steps.")
+                return result
         except Exception as e:
-            print(f"[roadmap] Groq failed ({e}), using fallback.")
+            print(f"[roadmap] ⚠️  Groq error: {e}")
     else:
-        print("[roadmap] GROQ_API_KEY not set, using fallback.")
+        print("[roadmap] ℹ️  No GROQ_API_KEY set — skipping Groq fallback.")
 
-    # 3. Rule-based fallback (no AI needed)
+    print("[roadmap] 🔁 Using rule-based fallback.")
     return _fallback_roadmap(missing_skills, score, jd_text)
 
 
-# ── Shared prompt builder ─────────────────────────────────────────────────────
+# ── Health check ──────────────────────────────────────────────────────────────
+
+def _ollama_is_running() -> bool:
+    """Quick ping to see if Ollama server is up."""
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+# ── Shared prompt ─────────────────────────────────────────────────────────────
 
 def _build_prompt(missing_skills, score, jd_text, resume_text) -> str:
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
-    return f"""You are an expert technical career coach helping a candidate improve their resume.
+    return f"""You are an expert technical career coach. Your job is to create a personalized improvement plan.
 
 CANDIDATE RESUME (excerpt):
 {resume_text[:800] if resume_text else "Not provided"}
@@ -60,101 +78,168 @@ MISSING SKILLS (required by JD but not found in resume):
 
 CURRENT MATCH SCORE: {score:.1f}%
 
-For each missing skill, write a specific actionable improvement step that:
-1. References the candidate's ACTUAL existing projects/tech stack from their resume
-2. Uses context from the ACTUAL job description
-3. Gives a concrete implementable action (not generic advice)
-4. Explains WHY this skill matters for THIS specific role
+Instructions:
+- For EACH skill in the list, create one actionable step.
+- Reference the candidate's actual resume tech stack when possible.
+- Use context from the actual job description.
+- Be specific and concrete, not generic.
 
 Priority rules:
-- "high"   = explicitly required in JD + completely missing from resume
-- "medium" = mentioned in JD + candidate has partial/related experience
-- "low"    = preferred/bonus skill in JD
+- "high"   = explicitly required in JD, completely absent from resume
+- "medium" = mentioned in JD, candidate has partial/adjacent experience
+- "low"    = nice-to-have or bonus skill in JD
 
-Respond ONLY with a valid JSON array. No markdown, no extra text, no code fences:
+YOU MUST respond ONLY with a raw JSON array. No explanation, no markdown, no code fences.
+Start your response with [ and end with ].
+
 [
   {{
-    "skill": "exact_skill_name_from_list",
+    "skill": "exact_skill_name_from_the_list_above",
     "action": "Specific 1-2 sentence action referencing their actual projects and JD context",
     "priority": "high or medium or low",
-    "why": "One sentence: why this skill matters for THIS specific role"
+    "why": "One sentence: why this skill matters for this specific role"
   }}
 ]"""
 
 
-def _parse_and_validate(raw: str) -> List[Dict]:
-    """Strip markdown fences, parse JSON, validate fields, sort by priority."""
-    raw = re.sub(r"^```(?:json)?", "", raw.strip()).strip()
-    raw = re.sub(r"```$", "", raw).strip()
+# ── JSON extractor (robust, 3-strategy) ──────────────────────────────────────
 
-    steps = json.loads(raw)
+def _extract_json(raw: str) -> Optional[List[Dict]]:
+    # Strategy 1: strip markdown fences and parse directly
+    cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
+    cleaned = re.sub(r"\s*```$", "", cleaned.strip(), flags=re.MULTILINE).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: find first [ ... ] block
+    match = re.search(r"(\[.*\])", raw, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: fix trailing commas then parse
+    try:
+        fixed = re.sub(r",\s*([\]}])", r"\1", cleaned)
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    return None
+
+
+def _parse_and_validate(raw: str, missing_skills: List[str]) -> List[Dict]:
+    steps = _extract_json(raw)
+    if not steps or not isinstance(steps, list):
+        raise ValueError(f"Could not parse JSON from LLM response:\n{raw[:300]}")
+
     validated = []
     for step in steps:
-        if all(k in step for k in ("skill", "action", "priority")):
-            validated.append({
-                "skill":    step["skill"],
-                "action":   step["action"],
-                "priority": step.get("priority", "medium"),
-                "why":      step.get("why", "")
-            })
+        if not isinstance(step, dict):
+            continue
+        if not all(k in step for k in ("skill", "action", "priority")):
+            continue
+        priority = step.get("priority", "medium").lower()
+        if priority not in ("high", "medium", "low"):
+            priority = "medium"
+        validated.append({
+            "skill":    step["skill"],
+            "action":   step["action"].strip(),
+            "priority": priority,
+            "why":      step.get("why", "").strip()
+        })
 
     order = {"high": 0, "medium": 1, "low": 2}
     validated.sort(key=lambda x: order.get(x["priority"], 1))
     return validated
 
 
-# ── Ollama (local) ────────────────────────────────────────────────────────────
+# ── Ollama — dolphin3:8b on RTX 4050 ─────────────────────────────────────────
 
 def _ollama_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
-    """Call local Ollama — runs on your RTX 4050, completely free."""
     prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
 
     response = requests.post(
         f"{OLLAMA_URL}/api/chat",
         json={
             "model": OLLAMA_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a JSON-only API. You output ONLY valid JSON arrays. "
+                        "Never include explanations, markdown, or code fences. "
+                        "Start your response with [ and end with ]."
+                    )
+                },
+                {"role": "user", "content": prompt}
+            ],
             "stream": False,
             "options": {
-                "temperature": 0.3,
-                "num_predict": 1500,
+                "temperature":    0.2,
+                "num_predict":    2048,
+                "top_p":          0.9,
+                "repeat_penalty": 1.1,
             }
         },
-        timeout=120  # local inference can take a moment
+        timeout=120
     )
     response.raise_for_status()
 
     raw = response.json()["message"]["content"]
-    return _parse_and_validate(raw)
+    return _parse_and_validate(raw, missing_skills)
 
 
-# ── Groq (free cloud fallback) ────────────────────────────────────────────────
+# ── Groq — free cloud fallback ────────────────────────────────────────────────
 
 def _groq_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
-    """Call Groq free tier — llama3.1-8b-instant, no credit card needed."""
     prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
 
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type":  "application/json"
         },
         json={
             "model": GROQ_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "max_tokens": 1500,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a JSON-only API. Output ONLY a valid JSON array. "
+                        "No markdown, no explanation. Start with [ end with ]."
+                    )
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens":  2048,
         },
         timeout=30
     )
     response.raise_for_status()
 
     raw = response.json()["choices"][0]["message"]["content"]
-    return _parse_and_validate(raw)
+
+    # Unwrap if Groq returns a dict wrapping the array
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            for v in parsed.values():
+                if isinstance(v, list):
+                    raw = json.dumps(v)
+                    break
+    except Exception:
+        pass
+
+    return _parse_and_validate(raw, missing_skills)
 
 
-# ── Rule-based fallback (zero dependencies) ───────────────────────────────────
+# ── Rule-based fallback — zero AI, always works ───────────────────────────────
 
 def _fallback_roadmap(missing_skills, score, jd_text="") -> List[Dict]:
     roadmap  = []
@@ -168,12 +253,12 @@ def _fallback_roadmap(missing_skills, score, jd_text="") -> List[Dict]:
         jd_context = ""
         for line in jd_text.splitlines():
             if skill_clean.lower() in line.lower():
-                jd_context = line.strip()
+                jd_context = line.strip()[:120]
                 break
 
         action = (
             f"Build a project demonstrating {skill_clean}."
-            + (f" The JD mentions: '{jd_context[:100]}'." if jd_context else "")
+            + (f" The JD mentions: '{jd_context}'." if jd_context else "")
             + " Include specific tools, metrics, and outcomes in your resume bullet."
         )
 
