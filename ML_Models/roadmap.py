@@ -12,9 +12,7 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "dolphin3:8b")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL   = "llama-3.1-8b-instant"
 
-
-# ── Main entry point ──────────────────────────────────────────────────────────
-
+#  Main entry point 
 def generate_roadmap(
     missing_skills: List[str],
     score: float,
@@ -31,18 +29,18 @@ def generate_roadmap(
                 print(f"[roadmap] ✅ Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
                 return result
         except Exception as e:
-            print(f"[roadmap] ⚠️  Ollama error: {e}")
+            print(f"[roadmap]  Ollama error: {e}")
     else:
-        print(f"[roadmap] ⚠️  Ollama not reachable at {OLLAMA_URL}")
+        print(f"[roadmap]  Ollama not reachable at {OLLAMA_URL}")
 
     if GROQ_API_KEY:
         try:
             result = _groq_roadmap(missing_skills, score, jd_text, resume_text)
             if result:
-                print(f"[roadmap] ✅ Groq fallback generated {len(result)} steps.")
+                print(f"[roadmap]  Groq fallback generated {len(result)} steps.")
                 return result
         except Exception as e:
-            print(f"[roadmap] ⚠️  Groq error: {e}")
+            print(f"[roadmap]  Groq error: {e}")
     else:
         print("[roadmap] ℹ️  No GROQ_API_KEY set — skipping Groq fallback.")
 
