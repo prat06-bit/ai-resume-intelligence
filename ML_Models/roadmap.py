@@ -26,7 +26,7 @@ def generate_roadmap(
         try:
             result = _ollama_roadmap(missing_skills, score, jd_text, resume_text)
             if result:
-                print(f"[roadmap] ✅ Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
+                print(f"[roadmap]  Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
                 return result
         except Exception as e:
             print(f"[roadmap]  Ollama error: {e}")
@@ -42,9 +42,9 @@ def generate_roadmap(
         except Exception as e:
             print(f"[roadmap]  Groq error: {e}")
     else:
-        print("[roadmap] ℹ️  No GROQ_API_KEY set — skipping Groq fallback.")
+        print("[roadmap]  No GROQ_API_KEY set — skipping Groq fallback.")
 
-    print("[roadmap] 🔁 Using rule-based fallback.")
+    print("[roadmap] Using rule-based fallback.")
     return _fallback_roadmap(missing_skills, score, jd_text)
 
 
@@ -98,7 +98,7 @@ Start your response with [ and end with ].
 ]"""
 
 
-# ── JSON extractor (robust, 3-strategy) ──────────────────────────────────────
+# JSON extractor 
 
 def _extract_json(raw: str) -> Optional[List[Dict]]:
     # Strategy 1: strip markdown fences and parse directly
