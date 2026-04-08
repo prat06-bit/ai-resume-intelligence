@@ -146,9 +146,7 @@ def _parse_and_validate(raw: str, missing_skills: List[str]) -> List[Dict]:
     validated.sort(key=lambda x: order.get(x["priority"], 1))
     return validated
 
-
-# ── Ollama — dolphin3:8b on RTX 4050 ─────────────────────────────────────────
-
+#  Ollama 
 def _ollama_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
 
