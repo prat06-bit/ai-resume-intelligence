@@ -48,10 +48,8 @@ def generate_roadmap(
     return _fallback_roadmap(missing_skills, score, jd_text)
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
-
+#  Health check 
 def _ollama_is_running() -> bool:
-    """Quick ping to see if Ollama server is up."""
     try:
         r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         return r.status_code == 200
