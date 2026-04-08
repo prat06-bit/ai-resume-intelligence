@@ -214,8 +214,6 @@ def _groq_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     response.raise_for_status()
 
     raw = response.json()["choices"][0]["message"]["content"]
-
-    # Unwrap if Groq returns a dict wrapping the array
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
