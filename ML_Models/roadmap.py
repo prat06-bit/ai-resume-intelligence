@@ -235,8 +235,7 @@ def _groq_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     return _parse_and_validate(raw, missing_skills)
 
 
-# ── Rule-based fallback — zero AI, always works ───────────────────────────────
-
+#  Rule-based fallback 
 def _fallback_roadmap(missing_skills, score, jd_text="") -> List[Dict]:
     roadmap  = []
     jd_lower = jd_text.lower() if jd_text else ""
