@@ -47,7 +47,6 @@ def generate_roadmap(
     print("[roadmap] Using rule-based fallback.")
     return _fallback_roadmap(missing_skills, score, jd_text)
 
-
 #  Health check 
 def _ollama_is_running() -> bool:
     try:
@@ -56,9 +55,7 @@ def _ollama_is_running() -> bool:
     except Exception:
         return False
 
-
-# ── Shared prompt ─────────────────────────────────────────────────────────────
-
+#  Shared prompt 
 def _build_prompt(missing_skills, score, jd_text, resume_text) -> str:
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
     return f"""You are an expert technical career coach. Your job is to create a personalized improvement plan.
@@ -99,7 +96,6 @@ Start your response with [ and end with ].
 
 
 # JSON extractor 
-
 def _extract_json(raw: str) -> Optional[List[Dict]]:
     # Strategy 1: strip markdown fences and parse directly
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
