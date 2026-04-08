@@ -94,7 +94,6 @@ Start your response with [ and end with ].
   }}
 ]"""
 
-
 # JSON extractor 
 def _extract_json(raw: str) -> Optional[List[Dict]]:
     # Strategy 1: strip markdown fences and parse directly
@@ -121,7 +120,6 @@ def _extract_json(raw: str) -> Optional[List[Dict]]:
         pass
 
     return None
-
 
 def _parse_and_validate(raw: str, missing_skills: List[str]) -> List[Dict]:
     steps = _extract_json(raw)
