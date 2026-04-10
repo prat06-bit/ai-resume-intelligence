@@ -181,8 +181,7 @@ def _ollama_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     return _parse_and_validate(raw, missing_skills)
 
 
-# ── Groq — free cloud fallback ────────────────────────────────────────────────
-
+#  Groq 
 def _groq_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
 
