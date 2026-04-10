@@ -104,7 +104,7 @@ def _extract_json(raw: str) -> Optional[List[Dict]]:
     except json.JSONDecodeError:
         pass
 
-    # Strategy 2: find first [ ... ] block
+    # Strategy 2: find first block
     match = re.search(r"(\[.*\])", raw, re.DOTALL)
     if match:
         try:
