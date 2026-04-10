@@ -118,7 +118,6 @@ def _extract_json(raw: str) -> Optional[List[Dict]]:
         return json.loads(fixed)
     except json.JSONDecodeError:
         pass
-
     return None
 
 def _parse_and_validate(raw: str, missing_skills: List[str]) -> List[Dict]:
