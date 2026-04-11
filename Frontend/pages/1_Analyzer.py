@@ -530,3 +530,94 @@ with tab4:
             </div>
             """
             st.markdown(card_html, unsafe_allow_html=True)
+
+    # ── Roadmap Chatbot ───────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("💬 Ask About Your Roadmap")
+    st.caption("Ask anything about your skill gaps, roadmap steps, or how to improve your resume.")
+
+    # Build context once for the session
+    roadmap_summary = "\n".join(
+        f"- {s['skill']} [{s['priority']}]: {s['action']} | Why: {s['why']}"
+        for s in roadmap
+    )
+    missing_list = ", ".join(missing.keys()) if missing else "None"
+
+    SYSTEM_PROMPT = f"""You are a helpful career coach assistant embedded in an AI Resume Analyzer app.
+
+The candidate's resume has been analyzed against a job description. Here is the context:
+
+MATCH SCORE: {ml_score:.1f}%
+MISSING SKILLS: {missing_list}
+
+PERSONALIZED ROADMAP:
+{roadmap_summary}
+
+JOB DESCRIPTION (excerpt):
+{jd_text[:800]}
+
+RESUME (excerpt):
+{resume_text[:600]}
+
+Your job is to:
+- Answer questions about the roadmap steps
+- Give specific project ideas for missing skills
+- Estimate timelines for closing skill gaps
+- Suggest resources (courses, docs, projects)
+- Explain WHY a skill matters for this specific role
+- Be concise, practical, and encouraging
+
+Never make up information not grounded in the context above."""
+
+    # Init chat history
+    if "roadmap_chat" not in st.session_state:
+        st.session_state.roadmap_chat = []
+
+    # Display chat history
+    for msg in st.session_state.roadmap_chat:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Chat input
+    if user_input := st.chat_input("e.g. How long will it take to learn Kubernetes?"):
+        # Add user message
+        st.session_state.roadmap_chat.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # Build messages for Ollama
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for msg in st.session_state.roadmap_chat:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # Call Ollama
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    import requests as _req
+                    _ollama_url  = os.environ.get("OLLAMA_URL",   "http://localhost:11434")
+                    _ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+
+                    resp = _req.post(
+                        f"{_ollama_url}/api/chat",
+                        json={
+                            "model": _ollama_model,
+                            "messages": messages,
+                            "stream": False,
+                            "options": {"temperature": 0.5, "num_predict": 1024}
+                        },
+                        timeout=120
+                    )
+                    resp.raise_for_status()
+                    reply = resp.json()["message"]["content"].strip()
+                except Exception as e:
+                    reply = f"⚠️ Could not reach Ollama: {e}. Make sure `ollama serve` is running."
+
+                st.markdown(reply)
+                st.session_state.roadmap_chat.append({"role": "assistant", "content": reply})
+
+    # Clear chat button
+    if st.session_state.roadmap_chat:
+        if st.button("🗑️ Clear Chat", key="clear_roadmap_chat"):
+            st.session_state.roadmap_chat = []
+            st.rerun()
