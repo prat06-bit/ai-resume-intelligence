@@ -57,26 +57,34 @@ class SemanticMatcher:
             "education":  [],
         }
 
+        HEADERS = {
+            "experience": ["work experience", "experience", "internship", "employment"],
+            "projects":   ["projects", "personal projects", "key projects"],
+            "skills":     ["technical skills", "skills", "technologies", "competencies"],
+            "education":  ["education", "academic", "qualifications", "certifications"],
+        }
+
         current = None
 
         for line in resume_text.splitlines():
             l = line.lower().strip()
 
-            if any(kw in l for kw in ["work experience", "experience", "internship"]):
-                current = "experience"
-            elif "project" in l:
-                current = "projects"
-            elif any(kw in l for kw in ["technical skill", "skill", "technolog"]):
-                current = "skills"
-            elif any(kw in l for kw in ["education", "academic"]):
-                current = "education"
+            if len(l) < 40:
+                matched_section = None
+                for sec, keywords in HEADERS.items():
+                    if any(kw == l or l.startswith(kw) for kw in keywords):
+                        matched_section = sec
+                        break
+                if matched_section:
+                    current = matched_section
+                    continue  
 
-            if current and current in sections:
-                sections[current].append(line)
+            if current and line.strip():
+                sections[current].append(line.strip())
 
         embeddings = {}
         for sec, lines in sections.items():
             text = " ".join(lines).strip()
-            embeddings[sec] = self.embed([text])[0] if text else None
+            embeddings[sec] = self.embed([text])[0] if len(text) > 20 else None
 
         return embeddings
