@@ -50,14 +50,16 @@ def compute_score(similarity: Dict[str, float]) -> Tuple[float, str]:
 
 def role_weighted_score(section_similarities: Dict[str, float], role: str) -> float:
     weights = ROLE_WEIGHTS.get(role, DEFAULT_ROLE_WEIGHTS)
-
+    SIM_LOW  = 0.15   
+    SIM_HIGH = 0.72  
     total_weight = 0.0
     weighted_sum = 0.0
 
     for section, sim in section_similarities.items():
         w = weights.get(section, 0.1)
-        weighted_sum  += sim * w
-        total_weight  += w
+        rescaled = max(0.0, min(1.0, (sim - SIM_LOW) / (SIM_HIGH - SIM_LOW)))
+        weighted_sum += rescaled * w
+        total_weight += w
 
     if total_weight == 0:
         return 0.0
@@ -74,7 +76,6 @@ def coverage_score(resume_skills: Set[str], jd_required_skills: Set[str]) -> flo
 
 def get_skill_gaps(resume_skills: Set[str], jd_required_skills: Set[str]) -> List[str]:
     return sorted(list(jd_required_skills - resume_skills))
-
 
 def get_matched_skills(resume_skills: Set[str], jd_required_skills: Set[str]) -> List[str]:
     return sorted(list(resume_skills & jd_required_skills))
