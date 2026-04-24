@@ -42,16 +42,16 @@ def compute_score(similarity):
 
 def role_weighted_score(section_similarities, role):
     weights = ROLE_WEIGHTS.get(role, DEFAULT_ROLE_WEIGHTS)
+    SIM_LOW  = 0.15   
+    SIM_HIGH = 0.72  
     total_weight = 0.0
     weighted_sum = 0.0
     for section, sim in section_similarities.items():
         w = weights.get(section, 0.1)
-        rescaled = (sim - SIM_FLOOR) / (SIM_CEILING - SIM_FLOOR)
-        rescaled = max(0.0, min(1.0, rescaled))
-        if section == "education":
-            rescaled = min(rescaled, 0.5)
+        rescaled = max(0.0, min(1.0, (sim - SIM_LOW) / (SIM_HIGH - SIM_LOW)))
         weighted_sum += rescaled * w
         total_weight += w
+
     if total_weight == 0:
         return 0.0
     return round((weighted_sum / total_weight) * 100, 2)
@@ -67,6 +67,5 @@ def coverage_score(resume_skills, jd_required_skills):
 def get_skill_gaps(resume_skills, jd_required_skills):
     return sorted(list(jd_required_skills - resume_skills))
 
-
-def get_matched_skills(resume_skills, jd_required_skills):
+def get_matched_skills(resume_skills: Set[str], jd_required_skills: Set[str]) -> List[str]:
     return sorted(list(resume_skills & jd_required_skills))

@@ -1,8 +1,3 @@
-"""
-Run from your project root:
-    python test_roadmap.py
-"""
-
 import sys
 import os
 
@@ -11,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "ML_Models"))
 
 from roadmap import generate_roadmap
 
-# ── Fake test data (mimics what the app sends) ────────────────────────────────
+#  Fake test data  
 
 MISSING_SKILLS = [
     "kubernetes",
@@ -45,7 +40,7 @@ Projects:
 Experience: 2 years at DataCorp as a junior data scientist
 """
 
-# ── Run
+#  Run 
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -60,7 +55,7 @@ if __name__ == "__main__":
         resume_text=RESUME_TEXT
     )
 
-    print(f"\n✅ Got {len(result)} roadmap steps:\n")
+    print(f"\n Got {len(result)} roadmap steps:\n")
     for i, step in enumerate(result, 1):
         print(f"  Step {i}: {step['skill']}  [{step['priority'].upper()}]")
         print(f"  Action : {step['action']}")

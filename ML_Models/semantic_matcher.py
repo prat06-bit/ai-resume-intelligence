@@ -40,20 +40,19 @@ class SemanticMatcher:
             best_idx   = int(sim_matrix[i].argmax())
             best_match = resume_list[best_idx]
 
-            # ── Exact / near-exact match (same canonical name) ──────────
+            #  Exact / near-exact match (same canonical name)   
             if jd_skill == best_match:
                 result[jd_skill] = best_score
 
-            # ── Strong semantic match ────────────────────────────────────
+            #  Strong semantic match    
             elif best_score >= 0.85:
                 result[jd_skill] = best_score
 
-            # ── Moderate match — apply penalty ──────────────────────────
-            # Skills are related but not the same (e.g. flask vs django)
+            #  Moderate match — apply penalty   
             elif best_score >= 0.65:
                 result[jd_skill] = best_score * 0.65
 
-            # ── Weak / unrelated match — treat as missing ────────────────
+            #  Weak / unrelated match — treat as missing 
             else:
                 result[jd_skill] = best_score * 0.3
 
