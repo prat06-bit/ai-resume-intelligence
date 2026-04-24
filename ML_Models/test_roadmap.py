@@ -1,8 +1,3 @@
-"""
-Run from your project root:
-    python test_roadmap.py
-"""
-
 import sys
 import os
 
@@ -11,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "ML_Models"))
 
 from roadmap import generate_roadmap
 
-# ── Fake test data (mimics what the app sends) ────────────────────────────────
+#  Fake test data  
 
 MISSING_SKILLS = [
     "kubernetes",
