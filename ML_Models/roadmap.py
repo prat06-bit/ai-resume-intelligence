@@ -11,7 +11,7 @@ OLLAMA_URL   = os.environ.get("OLLAMA_URL",   "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "dolphin3:8b")
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+#  Main entry point 
 
 def generate_roadmap(
     missing_skills: List[str],
@@ -26,18 +26,18 @@ def generate_roadmap(
         try:
             result = _ollama_roadmap(missing_skills, score, jd_text, resume_text)
             if result:
-                print(f"[roadmap] ✅ Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
+                print(f"[roadmap]  Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
                 return result
         except Exception as e:
-            print(f"[roadmap] ⚠️  Ollama error: {e}")
+            print(f"[roadmap]  Ollama error: {e}")
     else:
-        print(f"[roadmap] ⚠️  Ollama not reachable at {OLLAMA_URL} — is 'ollama serve' running?")
+        print(f"[roadmap]   Ollama not reachable at {OLLAMA_URL} — is 'ollama serve' running?")
 
-    print("[roadmap] 🔁 Using rule-based fallback.")
+    print("[roadmap]  Using rule-based fallback.")
     return _fallback_roadmap(missing_skills, score, jd_text)
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
+#  Health check 
 
 def _ollama_is_running() -> bool:
     try:
@@ -47,7 +47,7 @@ def _ollama_is_running() -> bool:
         return False
 
 
-# ── Prompt builder ────────────────────────────────────────────────────────────
+#  Prompt builder 
 
 def _build_prompt(missing_skills, score, jd_text, resume_text) -> str:
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
@@ -88,7 +88,7 @@ Start with [ and end with ].
 ]"""
 
 
-# ── JSON extractor (3-strategy, handles messy LLM output) ────────────────────
+#  JSON extractor
 
 def _extract_json(raw: str) -> Optional[List]:
     # Strategy 1: strip markdown fences, parse directly
@@ -143,7 +143,7 @@ def _parse_and_validate(raw: str, missing_skills: List[str]) -> List[Dict]:
     return validated
 
 
-# ── Ollama ────────────────────────────────────────────────────────────────────
+#  Ollama 
 
 def _ollama_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
@@ -179,7 +179,7 @@ def _ollama_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     return _parse_and_validate(raw, missing_skills)
 
 
-# ── Rule-based fallback (no AI, always works) ─────────────────────────────────
+#  Rule-based fallback
 
 def _fallback_roadmap(missing_skills, score, jd_text="") -> List[Dict]:
     roadmap  = []
