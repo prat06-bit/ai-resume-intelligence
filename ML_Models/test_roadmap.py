@@ -40,7 +40,7 @@ Projects:
 Experience: 2 years at DataCorp as a junior data scientist
 """
 
-# ── Run ───────────────────────────────────────────────────────────────────────
+#  Run 
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -54,7 +54,7 @@ if __name__ == "__main__":
         resume_text=RESUME_TEXT
     )
 
-    print(f"\n✅ Got {len(result)} roadmap steps:\n")
+    print(f"\n Got {len(result)} roadmap steps:\n")
     for i, step in enumerate(result, 1):
         print(f"  Step {i}: {step['skill']}  [{step['priority'].upper()}]")
         print(f"  Action : {step['action']}")
