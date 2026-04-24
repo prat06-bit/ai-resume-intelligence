@@ -7,11 +7,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-OLLAMA_URL   = os.environ.get("OLLAMA_URL",   "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "dolphin3:8b")
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+#  Main entry point
 
 def generate_roadmap(
     missing_skills: List[str],
@@ -22,32 +23,22 @@ def generate_roadmap(
     if not missing_skills:
         return []
 
-    if _ollama_is_running():
+    if NVIDIA_API_KEY:
         try:
-            result = _ollama_roadmap(missing_skills, score, jd_text, resume_text)
+            result = _nvidia_roadmap(missing_skills, score, jd_text, resume_text)
             if result:
-                print(f"[roadmap] ✅ Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
+                print(f"[roadmap]  NVIDIA API ({NVIDIA_MODEL}) generated {len(result)} steps.")
                 return result
         except Exception as e:
-            print(f"[roadmap] ⚠️  Ollama error: {e}")
+            print(f"[roadmap]  NVIDIA API error: {e}")
     else:
-        print(f"[roadmap] ⚠️  Ollama not reachable at {OLLAMA_URL} — is 'ollama serve' running?")
+        print("[roadmap]  NVIDIA_API_KEY not set — using rule-based fallback.")
 
-    print("[roadmap] 🔁 Using rule-based fallback.")
+    print("[roadmap]  Using rule-based fallback.")
     return _fallback_roadmap(missing_skills, score, jd_text)
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
-
-def _ollama_is_running() -> bool:
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
-        return r.status_code == 200
-    except Exception:
-        return False
-
-
-# ── Prompt builder ────────────────────────────────────────────────────────────
+#  Prompt builder
 
 def _build_prompt(missing_skills, score, jd_text, resume_text) -> str:
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
@@ -88,7 +79,7 @@ Start with [ and end with ].
 ]"""
 
 
-# ── JSON extractor (3-strategy, handles messy LLM output) ────────────────────
+#  JSON extractor
 
 def _extract_json(raw: str) -> Optional[List]:
     # Strategy 1: strip markdown fences, parse directly
@@ -143,43 +134,48 @@ def _parse_and_validate(raw: str, missing_skills: List[str]) -> List[Dict]:
     return validated
 
 
-# ── Ollama ────────────────────────────────────────────────────────────────────
+#  NVIDIA API
 
-def _ollama_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
+def _nvidia_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     prompt = _build_prompt(missing_skills, score, jd_text, resume_text)
 
+    headers = {
+        "Authorization": f"Bearer {NVIDIA_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": NVIDIA_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a JSON-only API. Output ONLY a valid JSON array. "
+                    "Never include explanations, markdown, or code fences. "
+                    "Start with [ and end with ]."
+                )
+            },
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "max_tokens": 2048,
+        "stream": False,
+    }
+
     response = requests.post(
-        f"{OLLAMA_URL}/api/chat",
-        json={
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a JSON-only API. Output ONLY a valid JSON array. "
-                        "Never include explanations, markdown, or code fences. "
-                        "Start with [ and end with ]."
-                    )
-                },
-                {"role": "user", "content": prompt}
-            ],
-            "stream": False,
-            "options": {
-                "temperature":    0.2,
-                "num_predict":    2048,
-                "top_p":          0.9,
-                "repeat_penalty": 1.1,
-            }
-        },
+        f"{NVIDIA_BASE_URL}/chat/completions",
+        headers=headers,
+        json=payload,
         timeout=120
     )
     response.raise_for_status()
 
-    raw = response.json()["message"]["content"]
+    raw = response.json()["choices"][0]["message"]["content"]
     return _parse_and_validate(raw, missing_skills)
 
 
-# ── Rule-based fallback (no AI, always works) ─────────────────────────────────
+#  Rule-based fallback
 
 def _fallback_roadmap(missing_skills, score, jd_text="") -> List[Dict]:
     roadmap  = []

@@ -111,7 +111,7 @@ section_similarities = {
     for sec, emb in section_embeddings.items()
     if emb is not None
 }
-
+         
 final_score = role_weighted_score(section_similarities, role)
 
 matched = {k: v for k, v in similarity.items() if v >= 0.30}
@@ -531,9 +531,9 @@ with tab4:
             """
             st.markdown(card_html, unsafe_allow_html=True)
 
-    # ── Roadmap Chatbot ───────────────────────────────────────────────────────
+    #  Roadmap Chatbot
     st.divider()
-    st.subheader("💬 Ask About Your Roadmap")
+    st.subheader(" Ask About Your Roadmap")
     st.caption("Ask anything about your skill gaps, roadmap steps, or how to improve your resume.")
 
     # Build context once for the session
@@ -611,13 +611,13 @@ Never make up information not grounded in the context above."""
                     resp.raise_for_status()
                     reply = resp.json()["message"]["content"].strip()
                 except Exception as e:
-                    reply = f"⚠️ Could not reach Ollama: {e}. Make sure `ollama serve` is running."
+                    reply = f" Could not reach Ollama: {e}. Make sure `ollama serve` is running."
 
                 st.markdown(reply)
                 st.session_state.roadmap_chat.append({"role": "assistant", "content": reply})
 
     # Clear chat button
     if st.session_state.roadmap_chat:
-        if st.button("🗑️ Clear Chat", key="clear_roadmap_chat"):
+        if st.button(" Clear Chat", key="clear_roadmap_chat"):
             st.session_state.roadmap_chat = []
             st.rerun()

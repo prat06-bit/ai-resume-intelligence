@@ -45,12 +45,13 @@ Projects:
 Experience: 2 years at DataCorp as a junior data scientist
 """
 
-# ── Run ───────────────────────────────────────────────────────────────────────
+# ── Run
 
 if __name__ == "__main__":
     print("=" * 60)
     print(f"Testing generate_roadmap() with {len(MISSING_SKILLS)} missing skills")
-    print(f"Model: {os.environ.get('OLLAMA_MODEL', 'llama3.1:8b')} via Ollama")    print("=" * 60)
+    print(f"Model: {os.environ.get('OLLAMA_MODEL', 'llama3.1:8b')} via Ollama")  
+    print("=" * 60)
 
     result = generate_roadmap(
         missing_skills=MISSING_SKILLS,

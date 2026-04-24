@@ -15,6 +15,14 @@ class SemanticMatcher:
         )
 
     def match_skills(self, resume_skills, jd_skills):
+        """
+        For each JD skill, find the best matching resume skill via cosine similarity.
+        
+        Applies a calibrated penalty so that semantically-close-but-not-same
+        skills don't inflate the score (e.g. 'flask' != 'spring_boot').
+
+        Returns: { jd_skill: score (0.0–1.0) }
+        """
         if not resume_skills or not jd_skills:
             return {}
 
@@ -24,7 +32,7 @@ class SemanticMatcher:
         res_emb = self.embed(resume_list)
         jd_emb  = self.embed(jd_list)
 
-        sim_matrix = cosine_similarity(jd_emb, res_emb) 
+        sim_matrix = cosine_similarity(jd_emb, res_emb)  # shape: (n_jd, n_resume)
 
         result = {}
         for i, jd_skill in enumerate(jd_list):
@@ -32,24 +40,30 @@ class SemanticMatcher:
             best_idx   = int(sim_matrix[i].argmax())
             best_match = resume_list[best_idx]
 
+            # ── Exact / near-exact match (same canonical name) ──────────
             if jd_skill == best_match:
                 result[jd_skill] = best_score
 
-            elif best_score >= 0.80:
+            # ── Strong semantic match ────────────────────────────────────
+            elif best_score >= 0.85:
                 result[jd_skill] = best_score
 
-            elif best_score >= 0.60:
-                result[jd_skill] = round(best_score * 0.80, 4)
+            # ── Moderate match — apply penalty ──────────────────────────
+            # Skills are related but not the same (e.g. flask vs django)
+            elif best_score >= 0.65:
+                result[jd_skill] = best_score * 0.65
 
-            elif best_score >= 0.40:
-                result[jd_skill] = round(best_score * 0.55, 4)
-
+            # ── Weak / unrelated match — treat as missing ────────────────
             else:
-                result[jd_skill] = round(best_score * 0.15, 4)
+                result[jd_skill] = best_score * 0.3
 
         return result
 
     def embed_sections(self, resume_text):
+        """
+        Split resume into sections and embed each one.
+        Returns { section_name: embedding_vector }
+        """
         sections = {
             "experience": [],
             "projects":   [],
@@ -58,13 +72,15 @@ class SemanticMatcher:
         }
 
         current = None
+        section_order = ["experience", "projects", "skills", "education"]
 
         for line in resume_text.splitlines():
             l = line.lower().strip()
 
+            # Detect section header
             if any(kw in l for kw in ["work experience", "experience", "internship"]):
                 current = "experience"
-            elif "project" in l:
+            elif any(kw in l for kw in ["project"]):
                 current = "projects"
             elif any(kw in l for kw in ["technical skill", "skill", "technolog"]):
                 current = "skills"
@@ -75,8 +91,11 @@ class SemanticMatcher:
                 sections[current].append(line)
 
         embeddings = {}
-        for sec, lines in sections.items():
-            text = " ".join(lines).strip()
-            embeddings[sec] = self.embed([text])[0] if text else None
+        for sec in section_order:
+            text = " ".join(sections[sec]).strip()
+            if text:
+                embeddings[sec] = self.embed([text])[0]
+            else:
+                embeddings[sec] = None
 
         return embeddings
