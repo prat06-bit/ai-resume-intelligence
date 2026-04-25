@@ -343,31 +343,38 @@ st.markdown("<style>.stMetric{text-align:center;}</style>", unsafe_allow_html=Tr
 role = st.selectbox("Target Role", ROLE_OPTIONS)
 
 col1, col2 = st.columns(2)
+
 with col1:
     st.subheader("Resume")
-    resume_file = st.file_uploader("Upload Resume (TXT / PDF)", type=["txt", "pdf"])
-    resume_text = st.text_area("Or paste resume text", height=220, key="resume_input")
+    resume_file = st.file_uploader("Upload Resume (TXT / PDF)", type=["txt", "pdf"], key="resume_file_up")
+    resume_text = st.text_area("Or paste resume text", height=200, key="resume_input")
 
 with col2:
     st.subheader("Job Description")
-    jd_text = st.text_area("Paste Job Description", height=350, key="jd_input")
+    jd_file = st.file_uploader("Upload JD (TXT / PDF)", type=["txt", "pdf"], key="jd_file_up")
+    jd_text = st.text_area("Or paste Job Description", height=200, key="jd_input")
 
-if not jd_text or len(jd_text.strip()) < 50:
-    st.warning("Job description required (min 50 characters).")
-    st.stop()
-
+# Process resume file if uploaded
 if resume_file:
     try:
-        if resume_file.type == "application/pdf":
-            import pdfplumber
-            with pdfplumber.open(resume_file) as pdf:
-                resume_text = "\n".join(p.extract_text() for p in pdf.pages if p.extract_text())
-        else:
-            resume_text = resume_file.read().decode("utf-8")
+        resume_text = _read_resume_file(resume_file)
     except Exception as e:
-        st.error(f"File read error: {e}")
+        st.error(f"Resume file read error: {e}")
         st.stop()
- 
+
+# Process JD file if uploaded
+if jd_file:
+    try:
+        jd_text = _read_resume_file(jd_file)
+    except Exception as e:
+        st.error(f"JD file read error: {e}")
+        st.stop()
+
+# Validate inputs
+if not jd_text or len(jd_text.strip()) < 50:
+    st.warning("Job description required (min 50 characters). Upload or paste text.")
+    st.stop()
+
 if not resume_text or len(resume_text.strip()) < 50:
     st.warning("Resume required (min 50 characters). Upload or paste text.")
     st.stop()
@@ -506,7 +513,7 @@ with tab2:
         try:
             # Get embeddings
             emb = np.array(matcher.embed(all_skills), dtype=np.float32)
-            st.write(f" Got {len(all_skills)} embeddings, shape: {emb.shape}")
+            st.write(f"✓ Got {len(all_skills)} embeddings, shape: {emb.shape}")
             
             # Cluster
             k = min(5, max(2, len(all_skills) // 3))
@@ -532,7 +539,7 @@ with tab2:
             if coords.shape[1] < 3:
                 coords = np.hstack([coords, np.zeros((len(coords), 3-coords.shape[1]))])
             
-            st.write(f" Projected to {coords.shape}, k={k}")
+            st.write(f"✓ Projected to {coords.shape}, k={k}")
  
             # MATPLOTLIB ONLY
             colors = ["#E63946", "#457B9D", "#2A9D8F", "#E9C46A", "#F4A261", "#9B5DE5"]
@@ -593,7 +600,7 @@ with tab2:
             st.pyplot(fig, use_container_width=True)
             
             # Data table
-            with st.expander(" Data"):
+            with st.expander("📊 Data"):
                 df_data = pd.DataFrame({
                     "Skill": all_skills,
                     "Source": ["Resume" if s in resume_set and s not in jd_set else "JD" if s in jd_set and s not in resume_set else "Both" for s in all_skills],
