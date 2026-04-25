@@ -12,7 +12,7 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
 
 
-#  Main entry point 
+#  Main entry point
 
 def generate_roadmap(
     missing_skills: List[str],
@@ -27,28 +27,18 @@ def generate_roadmap(
         try:
             result = _nvidia_roadmap(missing_skills, score, jd_text, resume_text)
             if result:
-                print(f"[roadmap]  Ollama ({OLLAMA_MODEL}) generated {len(result)} steps.")
+                print(f"[roadmap] NVIDIA ({NVIDIA_MODEL}) generated {len(result)} steps.")
                 return result
         except Exception as e:
-            print(f"[roadmap]  Ollama error: {e}")
+            print(f"[roadmap] NVIDIA error: {e}")
     else:
-        print(f"[roadmap]   Ollama not reachable at {OLLAMA_URL} — is 'ollama serve' running?")
+        print("[roadmap] NVIDIA_API_KEY not configured.")
 
     print("[roadmap]  Using rule-based fallback.")
     return _fallback_roadmap(missing_skills, score, jd_text)
 
 
-#  Health check 
-
-def _ollama_is_running() -> bool:
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
-        return r.status_code == 200
-    except Exception:
-        return False
-
-
-#  Prompt builder 
+#  Prompt builder
 
 def _build_prompt(missing_skills, score, jd_text, resume_text) -> str:
     skills_list = "\n".join(f"- {s.replace('_', ' ')}" for s in missing_skills)
@@ -144,7 +134,7 @@ def _parse_and_validate(raw: str, missing_skills: List[str]) -> List[Dict]:
     return validated
 
 
-#  Ollama 
+#  NVIDIA
 
 def _nvidia_roadmap(missing_skills, score, jd_text, resume_text) -> List[Dict]:
     prompt = _build_prompt(missing_skills, score, jd_text, resume_text)

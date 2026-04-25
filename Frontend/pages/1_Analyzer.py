@@ -1,623 +1,717 @@
+﻿import os
 import sys
-import os
+import warnings
+import importlib.util
+
+warnings.filterwarnings("ignore")
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-import streamlit as st
-import plotly.graph_objects as go
 import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import requests
 import matplotlib.pyplot as plt
-import sys
-import os
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-from sklearn.metrics.pairwise import cosine_similarity
+import streamlit as st
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from scipy.stats import gaussian_kde
+from sklearn.metrics import silhouette_score
+from sklearn.metrics.pairwise import cosine_similarity
 
-try:
-    import umap
-    HAS_UMAP = True
-except Exception:
-    HAS_UMAP = False
-
-from ML_Models.background_builder import build_background
-from ML_Models.skill_extractor import extract_skills, load_skills
-from ML_Models.semantic_matcher import SemanticMatcher
-from ML_Models.scoring import compute_score, role_weighted_score
 from ML_Models.roadmap import generate_roadmap
-from ML_Models.ml_features import build_feature_vector, FEATURE_NAMES
-from ML_Models.model import ResumeMatchModel
-from ML_Models.shap import ShapExplainer
-import shap
+from ML_Models.semantic_matcher import SemanticMatcher, compute_score, role_weighted_score
+from ML_Models.skill_extractor import extract_skills, load_skills
+
+
+ROLE_OPTIONS = [
+    "software_engineer",
+    "backend_engineer",
+    "frontend_engineer",
+    "fullstack_engineer",
+    "ml_engineer",
+    "data_scientist",
+    "data_analyst",
+    "devops_engineer",
+    "cloud_engineer",
+    "student",
+    "intern",
+]
+
+SKILL_SPACE_COLORS = [
+    "#4477AA",
+    "#EE6677",
+    "#228833",
+    "#CCBB44",
+    "#66CCEE",
+    "#AA3377",
+    "#BBBBBB",
+    "#000000",
+]
+
+
+def _read_resume_file(uploaded_file) -> str:
+    if uploaded_file.type == "application/pdf":
+        import pdfplumber
+
+        with pdfplumber.open(uploaded_file) as pdf:
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+    return uploaded_file.read().decode("utf-8", errors="replace")
+
+
+def _fit_skill_clusters(embeddings: np.ndarray) -> tuple[np.ndarray, int]:
+    n_samples = len(embeddings)
+    if n_samples < 3:
+        return np.zeros(n_samples, dtype=int), 1
+
+    best_labels = None
+    best_score = -np.inf
+    upper_k = min(6, n_samples - 1)
+
+    for k in range(2, upper_k + 1):
+        labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(embeddings)
+        if len(np.unique(labels)) < 2:
+            continue
+        try:
+            score = silhouette_score(embeddings, labels, metric="cosine")
+        except ValueError:
+            score = -np.inf
+        if score > best_score:
+            best_score = score
+            best_labels = labels
+
+    if best_labels is None:
+        return np.zeros(n_samples, dtype=int), 1
+    return best_labels, int(len(np.unique(best_labels)))
+
+
+def _cosine_distance_matrix(embeddings: np.ndarray) -> np.ndarray:
+    sim_matrix = cosine_similarity(embeddings)
+    dist_matrix = np.clip(1.0 - sim_matrix, 0.0, 2.0)
+    dist_matrix = (dist_matrix + dist_matrix.T) / 2.0
+    np.fill_diagonal(dist_matrix, 0.0)
+    return dist_matrix
+
+
+def _project_skill_embeddings(
+    embeddings: np.ndarray,
+    projection: str,
+    n_components: int,
+) -> np.ndarray:
+    n_samples, n_features = embeddings.shape
+
+    if projection == "UMAP":
+        if n_samples <= n_components:
+            raise ValueError(
+                f"UMAP {n_components}D needs at least {n_components + 1} skills; found {n_samples}."
+            )
+        from umap import UMAP
+
+        reducer = UMAP(
+            n_components=n_components,
+            n_neighbors=min(max(2, n_samples // 2), n_samples - 1),
+            min_dist=0.08,
+            metric="cosine",
+            init="random",
+            random_state=42,
+        )
+        coords = reducer.fit_transform(embeddings)
+    elif projection == "PCA":
+        n_safe = min(n_components, n_samples, n_features)
+        coords = PCA(n_components=n_safe, random_state=42).fit_transform(embeddings)
+    else:
+        from sklearn.manifold import MDS
+
+        coords = MDS(
+            n_components=n_components,
+            dissimilarity="precomputed",
+            random_state=42,
+            n_init=4,
+        ).fit_transform(_cosine_distance_matrix(embeddings))
+
+    coords = np.asarray(coords, dtype=float)
+    if coords.shape[1] < n_components:
+        padding = np.zeros((coords.shape[0], n_components - coords.shape[1]))
+        coords = np.hstack([coords, padding])
+    if not np.isfinite(coords).all():
+        raise ValueError(f"{projection} produced non-finite coordinates.")
+    return coords
+
+
+def _skill_source(skill: str, resume_set: set[str], jd_set: set[str]) -> str:
+    if skill in resume_set and skill in jd_set:
+        return "Resume + JD"
+    if skill in resume_set:
+        return "Resume"
+    return "JD"
+
+
+def _build_skill_space_frame(
+    skills: list[str],
+    coords: np.ndarray,
+    cluster_ids: np.ndarray,
+    resume_skills_set: set[str],
+    jd_skills_set: set[str],
+    similarity: dict,
+) -> pd.DataFrame:
+    rows = []
+    for idx, skill in enumerate(skills):
+        match_score = similarity.get(skill)
+        rows.append({
+            "skill": skill,
+            "label": skill.replace("_", " ").title(),
+            "source": _skill_source(skill, resume_skills_set, jd_skills_set),
+            "cluster": int(cluster_ids[idx]) + 1,
+            "x": float(coords[idx, 0]),
+            "y": float(coords[idx, 1]),
+            "z": float(coords[idx, 2]) if coords.shape[1] > 2 else 0.0,
+            "jd_similarity": None if match_score is None else round(match_score * 100, 1),
+        })
+    df = pd.DataFrame(rows)
+    df["jd_similarity_display"] = df["jd_similarity"].apply(
+        lambda value: "Resume-only" if pd.isna(value) else f"{value:.1f}%"
+    )
+    return df
+
+
+def _plotly_skill_space(df: pd.DataFrame, projection: str, dimensions: str) -> go.Figure:
+    df = df.copy()
+    df["cluster_label"] = "Cluster " + df["cluster"].astype(str)
+    symbol_map = {"Resume": "circle", "JD": "diamond", "Resume + JD": "square"}
+
+    common_args = dict(
+        data_frame=df,
+        color="cluster_label",
+        symbol="source",
+        symbol_map=symbol_map,
+        color_discrete_sequence=SKILL_SPACE_COLORS,
+        text="label",
+        hover_name="label",
+        hover_data={
+            "source": True,
+            "cluster_label": True,
+            "jd_similarity_display": True,
+            "x": ":.3f",
+            "y": ":.3f",
+            "z": ":.3f",
+            "label": False,
+            "cluster": False,
+        },
+    )
+
+    if dimensions == "3D":
+        fig = px.scatter_3d(
+            x="x",
+            y="y",
+            z="z",
+            **common_args,
+        )
+    else:
+        fig = px.scatter(
+            x="x",
+            y="y",
+            **common_args,
+        )
+
+    fig.update_layout(
+        title=f"{projection} - {dimensions} skill clusters",
+        template="plotly_white",
+        height=680 if dimensions == "3D" else 620,
+        margin=dict(l=10, r=10, t=60, b=20),
+        legend_title_text="Cluster / source",
+        uirevision="skill-space",
+    )
+    fig.update_traces(
+        mode="markers+text",
+        textposition="top center",
+        marker=dict(size=14, opacity=0.92, line=dict(width=1.2, color="#111827")),
+        selector=dict(type="scatter"),
+    )
+    fig.update_traces(
+        mode="markers+text",
+        textposition="top center",
+        marker=dict(size=7, opacity=0.92, line=dict(width=0.6, color="#111827")),
+        selector=dict(type="scatter3d"),
+    )
+    if dimensions == "3D":
+        fig.update_layout(scene=dict(
+            xaxis_title="Projection 1",
+            yaxis_title="Projection 2",
+            zaxis_title="Projection 3",
+        ))
+    else:
+        fig.update_xaxes(title_text="Projection 1", zeroline=True, showgrid=True)
+        fig.update_yaxes(title_text="Projection 2", zeroline=True, showgrid=True)
+    return fig
+
+
+def _matplotlib_skill_space(df: pd.DataFrame, projection: str, dimensions: str):
+    import matplotlib.pyplot as plt
+
+    marker_map = {"Resume": "o", "JD": "D", "Resume + JD": "s"}
+    fig = plt.figure(figsize=(11, 7))
+    is_3d = dimensions == "3D"
+    ax = fig.add_subplot(111, projection="3d") if is_3d else fig.add_subplot(111)
+
+    for _, row in df.iterrows():
+        color = SKILL_SPACE_COLORS[(int(row["cluster"]) - 1) % len(SKILL_SPACE_COLORS)]
+        marker = marker_map[row["source"]]
+        if is_3d:
+            ax.scatter(row["x"], row["y"], row["z"], color=color, s=90, marker=marker)
+        else:
+            ax.scatter(row["x"], row["y"], color=color, s=140, marker=marker, edgecolors="#111827")
+            ax.text(row["x"], row["y"], row["label"], fontsize=9, ha="center", va="bottom")
+
+    ax.set_title(f"{projection} - {dimensions} skill clusters")
+    ax.set_xlabel("Projection 1")
+    ax.set_ylabel("Projection 2")
+    if is_3d:
+        ax.set_zlabel("Projection 3")
+    else:
+        x_pad = max((df["x"].max() - df["x"].min()) * 0.08, 0.2)
+        y_pad = max((df["y"].max() - df["y"].min()) * 0.08, 0.2)
+        ax.set_xlim(df["x"].min() - x_pad, df["x"].max() + x_pad)
+        ax.set_ylim(df["y"].min() - y_pad, df["y"].max() + y_pad)
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    return fig
+
+
+def _roadmap_context_response(user_input: str, roadmap: list[dict]) -> str:
+    if not roadmap:
+        return "Your roadmap has no missing-skill steps right now, so focus on strengthening measurable project impact."
+
+    ranked = sorted(
+        roadmap,
+        key=lambda step: {"high": 0, "medium": 1, "low": 2}.get(step.get("priority"), 1),
+    )
+    focus = ranked[:3]
+    focus_text = ", ".join(step.get("skill", "").replace("_", " ") for step in focus)
+    if user_input.strip():
+        return f"Based on the generated roadmap, focus first on {focus_text}. Use the action and why fields below each roadmap card as the source of truth for your next resume update."
+    return f"Start with {focus_text}; these are the highest-priority gaps in this analysis."
+
+
+def _chat_with_roadmap(prompt: str, roadmap: list[dict]) -> str:
+    api_key = os.getenv("NVIDIA_API_KEY")
+    if not api_key:
+        return _roadmap_context_response(prompt, roadmap)
+
+    roadmap_summary = "\n".join(
+        f"- {step.get('skill', '')} ({step.get('priority', '')}): "
+        f"{step.get('action', '')} Why: {step.get('why', '')}"
+        for step in roadmap
+    )
+    try:
+        response = requests.post(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"),
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a concise career coach. Ground every answer in this roadmap. "
+                            "Do not invent skills, employers, projects, courses, or metrics.\n\n"
+                            f"ROADMAP:\n{roadmap_summary}"
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 220,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return _roadmap_context_response(prompt, roadmap)
+
 
 st.set_page_config(page_title="AI Resume Analyzer", layout="wide")
 st.title("AI Resume Analyzer")
-st.caption("Semantic ML • Explainable ATS • Embedding Analysis")
+st.caption("Semantic ML - Explainable ATS - Embedding Analysis")
+st.markdown("<style>.stMetric{text-align:center;}</style>", unsafe_allow_html=True)
 
-st.markdown(
-    """
-    <style>
-    .stMetric { text-align: center; }
-    .card {
-        padding: 16px;
-        border-radius: 14px;
-        background-color: #f7f7f7;
-        margin-bottom: 14px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-role = st.selectbox(
-    "Target Role",
-    [
-        "software_engineer", "backend_engineer", "frontend_engineer",
-        "fullstack_engineer", "ml_engineer", "data_scientist",
-        "data_analyst", "devops_engineer", "cloud_engineer",
-        "student", "intern"
-    ]
-)
+role = st.selectbox("Target Role", ROLE_OPTIONS)
 
 col1, col2 = st.columns(2)
-
 with col1:
+    st.subheader("Resume")
     resume_file = st.file_uploader("Upload Resume (TXT / PDF)", type=["txt", "pdf"])
-    resume_text = st.text_area("Or paste resume text", height=220)
+    resume_text = st.text_area("Or paste resume text", height=220, key="resume_input")
 
 with col2:
-    jd_text = st.text_area("Paste Job Description", height=350)
+    st.subheader("Job Description")
+    jd_text = st.text_area("Paste Job Description", height=350, key="jd_input")
 
-if not jd_text:
+if not jd_text or len(jd_text.strip()) < 50:
+    st.warning("Job description required (min 50 characters).")
     st.stop()
 
-def read_resume(file):
-    if file.type == "application/pdf":
-        import pdfplumber
-        with pdfplumber.open(file) as pdf:
-            return "\n".join(p.extract_text() for p in pdf.pages if p.extract_text())
-    return file.read().decode("utf-8")
-
 if resume_file:
-    resume_text = read_resume(resume_file)
+    try:
+        resume_text = _read_resume_file(resume_file)
+    except Exception as e:
+        st.error(f"File read error: {e}")
+        st.stop()
 
-if not resume_text:
+if not resume_text or len(resume_text.strip()) < 50:
+    st.warning("Resume required (min 50 characters). Upload or paste text.")
     st.stop()
 
 matcher = SemanticMatcher()
-skills_db = load_skills()
+try:
+    skills_db = load_skills()
+except FileNotFoundError as e:
+    st.error(str(e))
+    st.stop()
 
-resume_skills = extract_skills(resume_text, skills_db)
-jd_skills = extract_skills(jd_text, skills_db)
+resume_skills = sorted(extract_skills(resume_text, skills_db))
+jd_skills = sorted(extract_skills(jd_text, skills_db))
 
-similarity = matcher.match_skills(resume_skills, jd_skills)
-if not similarity:
-    similarity = {s: 0.0 for s in jd_skills}
+if not resume_skills and not jd_skills:
+    st.error("No skills detected. Ensure resume and JD contain technical terms.")
+    st.stop()
+if not resume_skills:
+    st.warning("No skills found in resume; results may be incomplete.")
+if not jd_skills:
+    st.warning("No skills found in JD; results may be incomplete.")
 
-skill_score, confidence = compute_score(similarity)
-
-section_embeddings = matcher.embed_sections(resume_text)
-jd_emb = matcher.embed([jd_text])[0]
+try:
+    similarity = matcher.match_skills(resume_skills, jd_skills) or {skill: 0.0 for skill in jd_skills}
+    section_embeddings = matcher.embed_sections(resume_text)
+    jd_emb = matcher.embed([jd_text])[0]
+except RuntimeError as e:
+    st.error(f"Embedding model unavailable: {e}")
+    st.stop()
 
 section_similarities = {
-    sec: float(cosine_similarity([emb], [jd_emb])[0][0])
-    for sec, emb in section_embeddings.items()
-    if emb is not None
+    section: float(cosine_similarity([embedding], [jd_emb])[0][0])
+    for section, embedding in section_embeddings.items()
+    if embedding is not None
 }
-         
-final_score = role_weighted_score(section_similarities, role)
 
-matched = {k: v for k, v in similarity.items() if v >= 0.30}
-missing = {k: v for k, v in similarity.items() if v < 0.30}
+skill_score, confidence = compute_score(similarity)
+section_score = role_weighted_score(section_similarities, role)
+matched = {skill: score for skill, score in similarity.items() if score >= 0.30}
+missing = {skill: score for skill, score in similarity.items() if score < 0.30}
+matched_count = len(matched)
+total_jd = len(similarity) or 1
+coverage_pct = (matched_count / total_jd) * 100
+final_score = round((skill_score * 0.50) + (section_score * 0.30) + (coverage_pct * 0.20), 1)
 
-X_single = build_feature_vector(similarity, section_similarities)
+metric1, metric2, metric3 = st.columns(3)
+metric1.metric("Final Match Score", f"{final_score:.1f}%")
+metric2.metric("Matched Skills", matched_count)
+metric3.metric("Missing Skills", len(missing))
+st.caption(f"Confidence: {confidence} - Coverage: {matched_count}/{total_jd} JD skills")
 
-X_train = []
-y_train = []
-
-for _ in range(80):
-    noise = np.random.normal(0, 0.06, size=X_single.shape)
-    x = np.clip(X_single + noise, 0, 1)
-
-    score_proxy = (
-        0.35 * x[0] +   
-        0.35 * x[1] +   
-        0.20 * x[2] +   
-        0.10 * x[3]     
+try:
+    roadmap = generate_roadmap(
+        missing_skills=list(missing.keys()),
+        score=final_score,
+        jd_text=jd_text,
+        resume_text=resume_text,
     )
+except Exception as e:
+    st.warning(f"Roadmap generation failed: {e}")
+    roadmap = []
 
-    label = int(score_proxy >= 0.35)
-
-    X_train.append(x)
-    y_train.append(label)
-
-if len(set(y_train)) < 2:
-    
-    x_pos = np.clip(X_single + np.array([0.25, 0.3, 0.25, 0.25, 0.2]), 0, 1)
-    x_neg = np.clip(X_single - np.array([0.25, 0.3, 0.25, 0.25, 0.2]), 0, 1)
-
-    X_train.extend([x_pos, x_neg])
-    y_train.extend([1, 0])
-
-X_train = np.vstack(X_train)
-y_train = np.array(y_train)
-
-X_train = np.vstack(X_train)
-y_train = np.array(y_train)
-
-ml_model = ResumeMatchModel()
-ml_model.fit(X_train, y_train)
-
-matched_count = sum(1 for v in similarity.values() if v >= 0.30)
-total_jd      = len(similarity) if similarity else 1
-
-coverage_pct  = (matched_count / total_jd) * 100
-ml_score      = round((skill_score * 0.5) + (final_score * 0.3) + (coverage_pct * 0.2), 1)
-m1, m2, m3 = st.columns(3)
-m1.metric("Final Match Score", f"{ml_score:.1f}%")
-m2.metric("Matched Skills", len(matched))
-m3.metric("Missing Skills", len(missing))
-st.caption(f"Confidence: {confidence} · Skill coverage: {matched_count}/{total_jd} JD skills matched")
 tab1, tab2, tab3, tab4 = st.tabs([
-    "Skill Match", "Embeddings", "Ablation", "Roadmap"
+    "Skill Match",
+    "Embeddings",
+    "Score Breakdown",
+    "Roadmap",
 ])
 
-roadmap = generate_roadmap(
-    missing_skills=list(missing.keys()),
-    score=ml_score,
-    jd_text=jd_text,
-    resume_text=resume_text
-)
-
 with tab1:
-    colA, colB = st.columns(2)
+    col_a, col_b = st.columns(2)
 
-    radar = go.Figure(
-        go.Scatterpolar(
-            r=[v * 100 for v in similarity.values()],
-            theta=list(similarity.keys()),
-            fill="toself",
-        )
-    )
+    radar = go.Figure(go.Scatterpolar(
+        r=[score * 100 for score in similarity.values()],
+        theta=[skill.replace("_", " ").title() for skill in similarity.keys()],
+        fill="toself",
+    ))
     radar.update_layout(
         polar=dict(radialaxis=dict(range=[0, 100])),
         height=420,
         showlegend=False,
+        template="plotly_white",
     )
-    colA.subheader("Overall Skill Alignment")
-    colA.plotly_chart(radar, use_container_width=True)
+    col_a.subheader("Overall Skill Alignment")
+    col_a.plotly_chart(radar, use_container_width=True)
 
     bar = go.Figure()
     bar.add_bar(
-        x=list(matched.keys()),
-        y=[v * 100 for v in matched.values()],
-        name="Present in Resume",
+        x=[skill.replace("_", " ").title() for skill in matched.keys()] or ["None"],
+        y=[score * 100 for score in matched.values()] or [0],
+        name="Matched",
+        marker_color="#2A9D8F",
     )
     bar.add_bar(
-        x=list(missing.keys()),
-        y=[v * 100 for v in missing.values()],
-        name="Expected but Weak / Missing",
+        x=[skill.replace("_", " ").title() for skill in missing.keys()] or ["None"],
+        y=[score * 100 for score in missing.values()] or [0],
+        name="Weak / Missing",
+        marker_color="#E76F51",
     )
     bar.update_layout(
         barmode="group",
         height=420,
-        yaxis_title="Coverage (%)",
+        yaxis_title="Semantic coverage (%)",
+        template="plotly_white",
     )
-    colB.subheader("Skill Coverage Comparison")
-    colB.plotly_chart(bar, use_container_width=True)
+    col_b.subheader("JD Skill Coverage")
+    col_b.plotly_chart(bar, use_container_width=True)
 
-    st.subheader("Skill Gaps & How to Improve")
-    st.caption(
-        "These skills are expected for the role but are either missing or weakly demonstrated in the resume."
-    )
-
+    st.subheader("Skill Gaps")
     if not missing:
-        st.success(
-            "All required skills are reasonably covered. Focus on depth, impact, and clarity."
-        )
+        st.success("All detected JD skills are covered at the current match threshold.")
     else:
-        # Sort by most missing first
-        top_missing = sorted(
-            missing.items(), key=lambda x: x[1]
-        )[:6]
+        gap_rows = [
+            {
+                "Skill": skill.replace("_", " ").title(),
+                "Coverage": f"{score * 100:.1f}%",
+                "Priority": "High" if score < 0.20 else "Medium" if score < 0.40 else "Low",
+            }
+            for skill, score in sorted(missing.items(), key=lambda item: item[1])
+        ]
+        st.dataframe(pd.DataFrame(gap_rows), use_container_width=True, hide_index=True)
 
-        for skill, score in top_missing:
-            severity = (
-                "High gap" if score < 0.2 else
-                "Moderate gap" if score < 0.4 else
-                "Low gap"
+with tab2:
+    st.subheader("Semantic Skill Space")
+    st.caption("Only extracted resume and JD skills are plotted. Circles are resume skills, diamonds are JD skills, squares appear in both.")
+ 
+    all_skills = sorted(set(resume_skills) | set(jd_skills))
+    if len(all_skills) < 3:
+        st.warning("Need at least 3 extracted skills for a meaningful projection.")
+    else:
+        control_a, control_b, control_c = st.columns(3)
+        has_umap = importlib.util.find_spec("umap") is not None
+        projection_options = ["UMAP", "PCA", "MDS"] if has_umap else ["PCA", "MDS"]
+        if not has_umap:
+            st.info("UMAP not installed; using PCA and MDS.")
+        projection = control_a.radio("Projection", projection_options, horizontal=True)
+        dimensions = control_b.radio("Dimensions", ["2D", "3D"], horizontal=True)
+        renderer = control_c.radio("Render", ["Interactive (Plotly)", "Static (Matplotlib)"], horizontal=True)
+        n_components = 3 if dimensions == "3D" else 2
+ 
+        try:
+            skill_embeddings = np.asarray(matcher.embed(all_skills), dtype=np.float32)
+            if skill_embeddings.ndim != 2 or skill_embeddings.shape[0] != len(all_skills):
+                raise ValueError("Embedding model returned unexpected shape.")
+ 
+            cluster_ids, cluster_count = _fit_skill_clusters(skill_embeddings)
+            coords = _project_skill_embeddings(skill_embeddings, projection, n_components)
+            plot_df = _build_skill_space_frame(
+                all_skills,
+                coords,
+                cluster_ids,
+                set(resume_skills),
+                set(jd_skills),
+                similarity,
             )
+ 
+            stat_a, stat_b, stat_c = st.columns(3)
+            stat_a.metric("Plotted Skills", len(plot_df))
+            stat_b.metric("Clusters", cluster_count)
+            stat_c.metric("Projection", f"{projection} {dimensions}")
+ 
+            if renderer == "Interactive (Plotly)":
+                fig = _plotly_skill_space(plot_df, projection, dimensions)
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    config={"displaylogo": False, "scrollZoom": True},
+                )
+            else:
+                st.pyplot(
+                    _matplotlib_skill_space(plot_df, projection, dimensions),
+                    use_container_width=True,
+                )
+ 
+            with st.expander("Projection data"):
+                st.dataframe(
+                    plot_df[[
+                        "skill",
+                        "source",
+                        "cluster",
+                        "jd_similarity_display",
+                        "x",
+                        "y",
+                        "z",
+                    ]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        except Exception as e:
+            st.error(f"Could not render {projection} skill space: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+with tab3:
+    st.subheader("Score Breakdown")
+    score_cols = st.columns(3)
+    score_cols[0].metric("Skill Score", f"{skill_score:.1f}%")
+    score_cols[1].metric("Section Alignment", f"{section_score:.1f}%")
+    score_cols[2].metric("Skill Coverage", f"{coverage_pct:.1f}%")
 
+    formula_df = pd.DataFrame([
+        {
+            "Component": "Skill score",
+            "Value": f"{skill_score:.1f}%",
+            "Weight": "50%",
+            "Points": round(skill_score * 0.50, 1),
+        },
+        {
+            "Component": "Section alignment",
+            "Value": f"{section_score:.1f}%",
+            "Weight": "30%",
+            "Points": round(section_score * 0.30, 1),
+        },
+        {
+            "Component": "JD skill coverage",
+            "Value": f"{coverage_pct:.1f}%",
+            "Weight": "20%",
+            "Points": round(coverage_pct * 0.20, 1),
+        },
+    ])
+    st.dataframe(formula_df, use_container_width=True, hide_index=True)
+
+    gauge = go.Figure(go.Indicator(
+        mode="gauge+number+delta",
+        value=final_score,
+        delta={"reference": 70, "increasing": {"color": "green"}},
+        title={"text": "ATS Match Score"},
+        gauge={
+            "axis": {"range": [0, 100]},
+            "bar": {"color": "#457B9D"},
+            "steps": [
+                {"range": [0, 40], "color": "#fde8e8"},
+                {"range": [40, 70], "color": "#fef3cd"},
+                {"range": [70, 100], "color": "#d4edda"},
+            ],
+            "threshold": {"line": {"color": "#16a34a", "width": 3}, "value": 70},
+        },
+    ))
+    gauge.update_layout(height=280)
+    st.plotly_chart(gauge, use_container_width=True)
+
+    st.divider()
+    st.markdown("### JD Skills Needing Attention")
+    if missing:
+        missing_sorted = sorted(missing.items(), key=lambda item: item[1])[:10]
+        kw_names = [skill.replace("_", " ").title() for skill, _ in missing_sorted]
+        kw_scores = [round(score * 100, 1) for _, score in missing_sorted]
+        colors = ["#e5533d" if score < 20 else "#f59e0b" if score < 40 else "#457B9D" for score in kw_scores]
+        fig_kw = go.Figure(go.Bar(
+            x=kw_scores,
+            y=kw_names,
+            orientation="h",
+            marker_color=colors,
+            text=[f"{score}%" for score in kw_scores],
+            textposition="outside",
+        ))
+        fig_kw.update_layout(
+            height=max(250, len(kw_names) * 38),
+            xaxis=dict(title="Current semantic coverage %", range=[0, 110]),
+            yaxis=dict(autorange="reversed"),
+            template="plotly_white",
+            margin=dict(l=10, r=60, t=10, b=30),
+        )
+        st.plotly_chart(fig_kw, use_container_width=True)
+    else:
+        st.success("No weak JD skills at the current threshold.")
+
+    st.divider()
+    st.markdown("### Roadmap-Backed Resume Actions")
+    if roadmap:
+        action_rows = [
+            {
+                "Skill": step.get("skill", "").replace("_", " ").title(),
+                "Priority": step.get("priority", "").title(),
+                "Action": step.get("action", ""),
+                "Why": step.get("why", ""),
+            }
+            for step in roadmap
+        ]
+        st.dataframe(pd.DataFrame(action_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No roadmap actions were generated for this analysis.")
+
+    st.divider()
+    st.markdown("### Resume Signals")
+    signal_rows = [
+        {
+            "Signal": "Resume length",
+            "Status": "OK" if len(resume_text) > 500 else "Needs detail",
+            "Evidence": f"{len(resume_text)} characters",
+        },
+        {
+            "Signal": "JD skill coverage",
+            "Status": "OK" if matched_count >= total_jd * 0.5 else "Needs work",
+            "Evidence": f"{matched_count}/{total_jd} matched",
+        },
+        {
+            "Signal": "Quantified achievements",
+            "Status": "Detected" if any(char.isdigit() for char in resume_text) else "Missing",
+            "Evidence": "Numbers found" if any(char.isdigit() for char in resume_text) else "No numbers found",
+        },
+        {
+            "Signal": "Portfolio or code link",
+            "Status": "Detected" if any(word in resume_text.lower() for word in ["github", "gitlab", "portfolio", "linkedin"]) else "Missing",
+            "Evidence": "Link keyword found" if any(word in resume_text.lower() for word in ["github", "gitlab", "portfolio", "linkedin"]) else "No portfolio keyword found",
+        },
+    ]
+    st.dataframe(pd.DataFrame(signal_rows), use_container_width=True, hide_index=True)
+
+with tab4:
+    st.subheader("Personalized Improvement Plan")
+    st.caption("Generated from the missing JD skills, the resume text, and the job description.")
+
+    if not roadmap:
+        st.success("No missing-skill roadmap items were generated.")
+    else:
+        for index, step in enumerate(roadmap, 1):
+            priority = step.get("priority", "medium")
+            color = "#e5533d" if priority == "high" else "#f59e0b" if priority == "medium" else "#16a34a"
+            skill_label = step.get("skill", "").replace("_", " ").title()
             st.markdown(
                 f"""
-                <div style="
-                    padding:14px;
-                    border-radius:12px;
-                    background:#f8f9fa;
-                    margin-bottom:10px;
-                    border-left:6px solid #e5533d;
-                ">
-                    <b>{skill.upper()}</b>
-                    <span style="float:right; font-size:13px;">
-                        {severity} · {round(score*100,1)}% coverage
-                    </span>
-                    <br><br>
-                    <small>
-                        This skill is expected in the job description but is not
-                        strongly demonstrated in your resume.
-                    </small>
-                    <ul style="margin-top:8px;">
-                        <li>Add a project where you used <b>{skill}</b></li>
-                        <li>Mention tools, metrics, or outcomes</li>
-                        <li>Explain <i>how</i> the skill was applied</li>
-                    </ul>
+                <div style="padding:16px;border-radius:8px;background:#ffffff;
+                            margin-bottom:12px;border-left:6px solid {color};
+                            box-shadow:0 2px 10px rgba(0,0,0,0.04);">
+                    <div style="display:flex;justify-content:space-between;gap:12px;">
+                        <b>Step {index}: {skill_label}</b>
+                        <span style="font-size:12px;color:{color};font-weight:700;">{priority.title()}</span>
+                    </div>
+                    <div style="margin-top:8px;">{step.get("action", "")}</div>
+                    <div style="margin-top:8px;font-size:12px;color:#6b7280;">{step.get("why", "")}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-with tab2:
-    st.subheader("Semantic Skill Space")
-
-    animate = st.checkbox("Animate PCA → UMAP transition", value=True)
-    show_density = st.checkbox("Show skill density contours", value=True)
-
-    skills = list(similarity.keys())
-   
-    if len(skills) < 3:
-        st.warning("Not enough skills for semantic projection (need ≥ 3).")
-        st.stop()
-  
-    raw_embeddings = matcher.embed(skills)
-    embeddings = np.array(raw_embeddings, dtype=np.float32)
-
-    if not np.isfinite(embeddings).all():
-        st.error("Embedding instability detected. Falling back to PCA.")
-        HAS_UMAP_SAFE = False
-    else:
-        HAS_UMAP_SAFE = HAS_UMAP
- 
-    pca = PCA(n_components=2, random_state=42)
-    coords_pca = pca.fit_transform(embeddings)
-
-    if HAS_UMAP_SAFE:
-        try:
-            reducer = umap.UMAP(
-                n_neighbors=min(8, len(skills) - 1),
-                min_dist=0.25,
-                metric="cosine",
-                random_state=42
-            )
-            coords_umap = reducer.fit_transform(embeddings)
-        except Exception:
-            st.warning("UMAP failed numerically. Using PCA instead.")
-            coords_umap = coords_pca.copy()
-            animate = False
-    else:
-        coords_umap = coords_pca.copy()
-        animate = False
-   
-    n_clusters = min(4, len(skills))
-    labels = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit_predict(embeddings)
-   
-    fig = go.Figure()
-
-    for cid in range(n_clusters):
-        idx = np.where(labels == cid)[0]
-        fig.add_trace(go.Scatter(
-            x=coords_pca[idx, 0],
-            y=coords_pca[idx, 1],
-            mode="markers+text",
-            text=[skills[i] for i in idx],
-            textposition="top center",
-            marker=dict(size=14),
-            name=f"Cluster {cid}"
-        ))
-  
-    if show_density:
-        xy = np.vstack([coords_pca[:, 0], coords_pca[:, 1]])
-        kde = gaussian_kde(xy)
-
-        xgrid, ygrid = np.mgrid[
-            coords_pca[:, 0].min():coords_pca[:, 0].max():100j,
-            coords_pca[:, 1].min():coords_pca[:, 1].max():100j
-        ]
-
-        z = kde(np.vstack([xgrid.ravel(), ygrid.ravel()])).reshape(xgrid.shape)
-
-        fig.add_trace(go.Contour(
-            x=xgrid[:, 0],
-            y=ygrid[0],
-            z=z,
-            opacity=0.25,
-            showscale=False
-        ))
-
-    if animate:
-        fig.frames = [
-            go.Frame(
-                data=[go.Scatter(
-                    x=coords_umap[:, 0],
-                    y=coords_umap[:, 1]
-                )],
-                name="UMAP"
-            )
-        ]
-
-        fig.update_layout(
-            updatemenus=[dict(
-                type="buttons",
-                buttons=[dict(
-                    label="▶ Morph PCA → UMAP",
-                    method="animate",
-                    args=[["UMAP"], {"frame": {"duration": 1200, "redraw": True}}]
-                )]
-            )]
-        )
-
-    fig.update_layout(
-        height=540,
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        plot_bgcolor="white"
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-
-with tab3:
-    st.subheader("Score Breakdown")
-
-    delta = final_score - skill_score
-    c1, c2 = st.columns(2)
-
-    c1.metric("Context-Aware Model", f"{final_score:.2f}%", f"{delta:+.2f}%")
-    c2.metric("Skills-Only Model", f"{skill_score:.2f}%", f"{-delta:+.2f}%")
-
-    if delta >= 0:
-        st.success("Context-aware scoring improves alignment for this resume.")
-    else:
-        st.warning("Keyword-only scoring performs slightly better here.")
-
-    st.caption(
-        "The final score considers skill match, project relevance, and experience alignment."
-    )
-
-    background = X_train[y_train == 0][:30]
-    shap_explainer = ShapExplainer(ml_model.model, background)
-
-    shap_exp = shap_explainer.local(X_single.reshape(1, -1))
-    global_shap = shap_explainer.global_importance(background)
-
-    with st.expander("How this score was calculated"):
-        shap.plots.waterfall(
-            shap.Explanation(
-                values=shap_exp.values[0],
-                base_values=shap_exp.base_values[0],
-                feature_names=[
-                    "Project relevance",
-                    "Job skill coverage",
-                    "Experience alignment",
-                    "Overall skill match",
-                    "Skills section clarity",
-                ],
-            ),
-            max_display=5,
-            show=False,
-        )
-        st.pyplot(plt.gcf(), clear_figure=True)
-
-        st.caption(
-            "This chart shows how each signal pushed the score up or down for *this resume*."
-        )
-
-    st.subheader("What the model generally prioritizes")
-    st.caption(
-        "Across many successful resumes, these signals tend to matter the most."
-    )
-
-    priorities = sorted(
-        zip(
-            [
-                "Project relevance",
-                "Job skill coverage",
-                "Experience alignment",
-                "Overall skill match",
-                "Skills section clarity",
-            ],
-            global_shap,
-        ),
-        key=lambda x: abs(x[1]),
-        reverse=True,
-    )[:3]
-
-    for name, _ in priorities:
-        st.markdown(
-            f"""
-            <div style="
-                padding:12px;
-                border-radius:10px;
-                background:#f8f9fa;
-                margin-bottom:8px;
-            ">
-                <b>{name}</b><br>
-                <small>
-                    Frequently influences hiring decisions across resumes.
-                </small>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.subheader("Potential improvement signals")
-
-    reasons = [
-        name
-        for name, value in zip(
-            [
-                "Project relevance",
-                "Job skill coverage",
-                "Experience alignment",
-                "Overall skill match",
-                "Skills section clarity",
-            ],
-            shap_exp.values[0],
-        )
-        if value < -0.03
-    ]
-
-    if not reasons:
-        st.success("No strong negative signals detected.")
-    else:
-        for r in reasons:
-            st.write(f"• Strengthen **{r}** to improve alignment.")
-
-with tab4:
-    st.subheader("Personalized Improvement Plan")
-    st.caption(
-        "A targeted roadmap showing what will most improve your resume’s alignment with this role."
-    )
-
-    if not roadmap or len(roadmap) == 0:
-        st.success(
-            "All required skills are covered. Focus on applying, interviewing, and refining impact."
-        )
-    else:
-        for i, step in enumerate(roadmap, 1):
-            is_high   = step["priority"] == "high"
-            is_medium = step["priority"] == "medium"
-            priority_color = "#e5533d" if is_high else "#f59e0b" if is_medium else "#16a34a"
-            priority_label = "High priority" if is_high else "Medium priority" if is_medium else "Low priority"
-            skill_label    = step["skill"].replace("_", " ").title()
-            action_text    = step.get("action", "")
-            why_text       = step.get("why", "")
-
-            why_html = (
-                f'<div style="margin-top:8px;font-size:12px;color:#6b7280;font-style:italic;"> {why_text}</div>'
-                if why_text else ""
-            )
-
-            card_html = f"""
-            <div style="
-                padding:18px;
-                border-radius:16px;
-                background:#ffffff;
-                margin-bottom:14px;
-                box-shadow:0 4px 14px rgba(0,0,0,0.04);
-                border-left:6px solid {priority_color};
-            ">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <b style="font-size:16px;">Step {i}: {skill_label}</b>
-                    <span style="
-                        font-size:12px;
-                        padding:4px 10px;
-                        border-radius:999px;
-                        background:{priority_color};
-                        color:white;
-                    ">{priority_label}</span>
-                </div>
-                <div style="margin-top:10px;font-size:14px;color:#1f2937;">
-                    {action_text}
-                </div>
-                {why_html}
-            </div>
-            """
-            st.markdown(card_html, unsafe_allow_html=True)
-
-    #  Roadmap Chatbot
     st.divider()
-    st.subheader(" Ask About Your Roadmap")
-    st.caption("Ask anything about your skill gaps, roadmap steps, or how to improve your resume.")
+    st.subheader("Ask About Your Roadmap")
 
-    # Build context once for the session
-    roadmap_summary = "\n".join(
-        f"- {s['skill']} [{s['priority']}]: {s['action']} | Why: {s['why']}"
-        for s in roadmap
-    )
-    missing_list = ", ".join(missing.keys()) if missing else "None"
-
-    SYSTEM_PROMPT = f"""You are a helpful career coach assistant embedded in an AI Resume Analyzer app.
-
-The candidate's resume has been analyzed against a job description. Here is the context:
-
-MATCH SCORE: {ml_score:.1f}%
-MISSING SKILLS: {missing_list}
-
-PERSONALIZED ROADMAP:
-{roadmap_summary}
-
-JOB DESCRIPTION (excerpt):
-{jd_text[:800]}
-
-RESUME (excerpt):
-{resume_text[:600]}
-
-Your job is to:
-- Answer questions about the roadmap steps
-- Give specific project ideas for missing skills
-- Estimate timelines for closing skill gaps
-- Suggest resources (courses, docs, projects)
-- Explain WHY a skill matters for this specific role
-- Be concise, practical, and encouraging
-
-Never make up information not grounded in the context above."""
-
-    # Init chat history
     if "roadmap_chat" not in st.session_state:
         st.session_state.roadmap_chat = []
 
-    # Display chat history
-    for msg in st.session_state.roadmap_chat:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    for message in st.session_state.roadmap_chat:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-    # Chat input
-    if user_input := st.chat_input("e.g. How long will it take to learn Kubernetes?"):
-        # Add user message
-        st.session_state.roadmap_chat.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-
-        # Build messages for Ollama
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for msg in st.session_state.roadmap_chat:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-
-        # Call Ollama
+    if prompt := st.chat_input("Ask about priority, sequencing, or resume edits..."):
+        st.session_state.roadmap_chat.append({"role": "user", "content": prompt})
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                try:
-                    import requests as _req
-                    _ollama_url  = os.environ.get("OLLAMA_URL",   "http://localhost:11434")
-                    _ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
-
-                    resp = _req.post(
-                        f"{_ollama_url}/api/chat",
-                        json={
-                            "model": _ollama_model,
-                            "messages": messages,
-                            "stream": False,
-                            "options": {"temperature": 0.5, "num_predict": 1024}
-                        },
-                        timeout=120
-                    )
-                    resp.raise_for_status()
-                    reply = resp.json()["message"]["content"].strip()
-                except Exception as e:
-                    reply = f" Could not reach Ollama: {e}. Make sure `ollama serve` is running."
-
-                st.markdown(reply)
-                st.session_state.roadmap_chat.append({"role": "assistant", "content": reply})
-
-    # Clear chat button
-    if st.session_state.roadmap_chat:
-        if st.button(" Clear Chat", key="clear_roadmap_chat"):
-            st.session_state.roadmap_chat = []
-            st.rerun()
+                reply = _chat_with_roadmap(prompt, roadmap)
+            st.markdown(reply)
+        st.session_state.roadmap_chat.append({"role": "assistant", "content": reply})
