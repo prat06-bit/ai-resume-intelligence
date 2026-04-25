@@ -358,11 +358,16 @@ if not jd_text or len(jd_text.strip()) < 50:
 
 if resume_file:
     try:
-        resume_text = _read_resume_file(resume_file)
+        if resume_file.type == "application/pdf":
+            import pdfplumber
+            with pdfplumber.open(resume_file) as pdf:
+                resume_text = "\n".join(p.extract_text() for p in pdf.pages if p.extract_text())
+        else:
+            resume_text = resume_file.read().decode("utf-8")
     except Exception as e:
         st.error(f"File read error: {e}")
         st.stop()
-
+ 
 if not resume_text or len(resume_text.strip()) < 50:
     st.warning("Resume required (min 50 characters). Upload or paste text.")
     st.stop()
@@ -487,74 +492,121 @@ with tab1:
 
 with tab2:
     st.subheader("Semantic Skill Space")
-    st.caption("Only extracted resume and JD skills are plotted. Circles are resume skills, diamonds are JD skills, squares appear in both.")
+    st.caption("Circles = Resume | Diamonds = JD | Squares = Both")
  
     all_skills = sorted(set(resume_skills) | set(jd_skills))
     if len(all_skills) < 3:
-        st.warning("Need at least 3 extracted skills for a meaningful projection.")
+        st.warning("Need ≥3 skills.")
     else:
-        control_a, control_b, control_c = st.columns(3)
-        has_umap = importlib.util.find_spec("umap") is not None
-        projection_options = ["UMAP", "PCA", "MDS"] if has_umap else ["PCA", "MDS"]
-        if not has_umap:
-            st.info("UMAP not installed; using PCA and MDS.")
-        projection = control_a.radio("Projection", projection_options, horizontal=True)
-        dimensions = control_b.radio("Dimensions", ["2D", "3D"], horizontal=True)
-        renderer = control_c.radio("Render", ["Interactive (Plotly)", "Static (Matplotlib)"], horizontal=True)
-        n_components = 3 if dimensions == "3D" else 2
+        c1, c2, c3 = st.columns(3)
+        proj = c1.radio("Projection", ["MDS", "PCA", "UMAP"], horizontal=True)
+        dim = c2.radio("Dimensions", ["2D", "3D"], horizontal=True)
+        n_comp = 3 if dim == "3D" else 2
  
         try:
-            skill_embeddings = np.asarray(matcher.embed(all_skills), dtype=np.float32)
-            if skill_embeddings.ndim != 2 or skill_embeddings.shape[0] != len(all_skills):
-                raise ValueError("Embedding model returned unexpected shape.")
+            # Get embeddings
+            emb = np.array(matcher.embed(all_skills), dtype=np.float32)
+            st.write(f" Got {len(all_skills)} embeddings, shape: {emb.shape}")
+            
+            # Cluster
+            k = min(5, max(2, len(all_skills) // 3))
+            km = KMeans(n_clusters=k, random_state=42, n_init=5)
+            clusters = km.fit_predict(emb)
+            
+            # Project
+            if proj == "MDS":
+                from sklearn.manifold import MDS
+                dist = 1 - cosine_similarity(emb)
+                coords = MDS(n_components=n_comp, dissimilarity='precomputed', random_state=42).fit_transform(dist)
+            elif proj == "PCA":
+                n_safe = min(n_comp, emb.shape[0], emb.shape[1])
+                coords = PCA(n_components=n_safe, random_state=42).fit_transform(emb)
+            else:  # UMAP
+                try:
+                    import umap.umap_ as umap_lib
+                    coords = umap_lib.UMAP(n_components=n_comp, n_neighbors=min(15, len(all_skills)-1), random_state=42).fit_transform(emb)
+                except:
+                    dist = 1 - cosine_similarity(emb)
+                    coords = MDS(n_components=n_comp, dissimilarity='precomputed', random_state=42).fit_transform(dist)
+            
+            if coords.shape[1] < 3:
+                coords = np.hstack([coords, np.zeros((len(coords), 3-coords.shape[1]))])
+            
+            st.write(f" Projected to {coords.shape}, k={k}")
  
-            cluster_ids, cluster_count = _fit_skill_clusters(skill_embeddings)
-            coords = _project_skill_embeddings(skill_embeddings, projection, n_components)
-            plot_df = _build_skill_space_frame(
-                all_skills,
-                coords,
-                cluster_ids,
-                set(resume_skills),
-                set(jd_skills),
-                similarity,
-            )
+            # MATPLOTLIB ONLY
+            colors = ["#E63946", "#457B9D", "#2A9D8F", "#E9C46A", "#F4A261", "#9B5DE5"]
+            resume_set = set(resume_skills)
+            jd_set = set(jd_skills)
+            marker_map = {"circle": "o", "diamond": "D", "square": "s"}
+            
+            fig = plt.figure(figsize=(12, 8))
+            
+            if dim == "2D":
+                ax = fig.add_subplot(111)
+                for i, skill in enumerate(all_skills):
+                    in_r = skill in resume_set
+                    in_j = skill in jd_set
+                    
+                    if in_r and in_j:
+                        marker = "s"
+                    elif in_r:
+                        marker = "o"
+                    else:
+                        marker = "D"
+                    
+                    color = colors[clusters[i] % len(colors)]
+                    ax.scatter(coords[i, 0], coords[i, 1], 
+                              c=color, s=250, marker=marker, 
+                              alpha=0.8, edgecolors="white", linewidth=2, zorder=10)
+                    ax.text(coords[i, 0], coords[i, 1] + 0.15, skill, 
+                           ha='center', fontsize=10, weight='bold', zorder=11)
+                
+                ax.set_xlabel("Projection 1", fontsize=12)
+                ax.set_ylabel("Projection 2", fontsize=12)
+                ax.grid(True, alpha=0.3)
+                ax.set_facecolor("#FAFAFA")
+            else:  # 3D
+                ax = fig.add_subplot(111, projection='3d')
+                for i, skill in enumerate(all_skills):
+                    in_r = skill in resume_set
+                    in_j = skill in jd_set
+                    
+                    if in_r and in_j:
+                        marker = "s"
+                    elif in_r:
+                        marker = "o"
+                    else:
+                        marker = "D"
+                    
+                    color = colors[clusters[i] % len(colors)]
+                    ax.scatter(coords[i, 0], coords[i, 1], coords[i, 2],
+                              c=color, s=150, marker=marker, 
+                              alpha=0.8, edgecolors="white", linewidth=1, zorder=10)
+                
+                ax.set_xlabel("Projection 1", fontsize=10)
+                ax.set_ylabel("Projection 2", fontsize=10)
+                ax.set_zlabel("Projection 3", fontsize=10)
+            
+            fig.suptitle(f"{proj} — {dim} Skill Clusters (k={k})", fontsize=14, weight='bold')
+            plt.tight_layout()
+            st.pyplot(fig, use_container_width=True)
+            
+            # Data table
+            with st.expander(" Data"):
+                df_data = pd.DataFrame({
+                    "Skill": all_skills,
+                    "Source": ["Resume" if s in resume_set and s not in jd_set else "JD" if s in jd_set and s not in resume_set else "Both" for s in all_skills],
+                    "Cluster": [f"C{c}" for c in clusters],
+                    "Similarity": [f"{similarity.get(s, 0)*100:.0f}%" for s in all_skills],
+                })
+                st.dataframe(df_data, use_container_width=True, hide_index=True)
  
-            stat_a, stat_b, stat_c = st.columns(3)
-            stat_a.metric("Plotted Skills", len(plot_df))
-            stat_b.metric("Clusters", cluster_count)
-            stat_c.metric("Projection", f"{projection} {dimensions}")
- 
-            if renderer == "Interactive (Plotly)":
-                fig = _plotly_skill_space(plot_df, projection, dimensions)
-                st.plotly_chart(
-                    fig,
-                    use_container_width=True,
-                    config={"displaylogo": False, "scrollZoom": True},
-                )
-            else:
-                st.pyplot(
-                    _matplotlib_skill_space(plot_df, projection, dimensions),
-                    use_container_width=True,
-                )
- 
-            with st.expander("Projection data"):
-                st.dataframe(
-                    plot_df[[
-                        "skill",
-                        "source",
-                        "cluster",
-                        "jd_similarity_display",
-                        "x",
-                        "y",
-                        "z",
-                    ]],
-                    use_container_width=True,
-                    hide_index=True,
-                )
         except Exception as e:
-            st.error(f"Could not render {projection} skill space: {e}")
+            st.error(f"Error: {e}")
             import traceback
             st.code(traceback.format_exc())
+            
 with tab3:
     st.subheader("Score Breakdown")
     score_cols = st.columns(3)
