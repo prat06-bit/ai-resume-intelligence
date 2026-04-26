@@ -24,6 +24,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 from ML_Models.roadmap import generate_roadmap
 from ML_Models.semantic_matcher import SemanticMatcher, compute_score, role_weighted_score
 from ML_Models.skill_extractor import extract_skills, load_skills
+@st.cache_resource
+def load_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
 
 ROLE_OPTIONS = [
