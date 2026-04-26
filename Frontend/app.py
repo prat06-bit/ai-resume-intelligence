@@ -323,4 +323,4 @@ st.markdown(
 
 page = st.query_params.get("page")
 if page == "analyzer":
-    st.switch_page("pages/1_Analyzer.py")
+    st.switch_page("pages/analyzer.py")
