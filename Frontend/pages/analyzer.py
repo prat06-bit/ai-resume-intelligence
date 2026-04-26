@@ -513,7 +513,7 @@ with tab2:
         try:
             # Get embeddings
             emb = np.array(matcher.embed(all_skills), dtype=np.float32)
-            st.write(f"✓ Got {len(all_skills)} embeddings, shape: {emb.shape}")
+            st.write(f" Got {len(all_skills)} embeddings, shape: {emb.shape}")
             
             # Cluster
             k = min(5, max(2, len(all_skills) // 3))
@@ -539,7 +539,7 @@ with tab2:
             if coords.shape[1] < 3:
                 coords = np.hstack([coords, np.zeros((len(coords), 3-coords.shape[1]))])
             
-            st.write(f"✓ Projected to {coords.shape}, k={k}")
+            st.write(f" Projected to {coords.shape}, k={k}")
  
             # MATPLOTLIB ONLY
             colors = ["#E63946", "#457B9D", "#2A9D8F", "#E9C46A", "#F4A261", "#9B5DE5"]
@@ -600,7 +600,7 @@ with tab2:
             st.pyplot(fig, use_container_width=True)
             
             # Data table
-            with st.expander("📊 Data"):
+            with st.expander(" Data"):
                 df_data = pd.DataFrame({
                     "Skill": all_skills,
                     "Source": ["Resume" if s in resume_set and s not in jd_set else "JD" if s in jd_set and s not in resume_set else "Both" for s in all_skills],
