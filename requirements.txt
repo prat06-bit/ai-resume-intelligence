@@ -5,10 +5,7 @@ numpy==1.26.4
 pandas==2.2.0
 plotly==5.18.0
 matplotlib==3.8.4
-python-dotenv==1.0.0
 requests==2.31.0
 pdfplumber==0.10.3
 umap-learn==0.5.5
-torch==2.1.2
-transformers==4.36.2
-huggingface-hub==0.20.1
+python-dotenv==1.0.0
