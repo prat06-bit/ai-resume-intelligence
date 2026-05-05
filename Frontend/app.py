@@ -209,7 +209,7 @@ st.markdown(
   <div>
     <a href="#how">How It Works</a>
     <a href="#different">Why Different</a>
-    <a class="nav-btn" href="?page=analyzer">Analyze Resume</a>
+    <a class="nav-btn" href="?page=auth">Sign In</a>
   </div>
 </div>
 """,
@@ -225,7 +225,7 @@ st.markdown(
     Semantic ML analysis of skills, experience depth,
     and real hiring signals — not keyword stuffing.
   </p><br/>
-  <a class="btn" href="?page=analyzer">Analyze My Resume</a>
+  <a class="btn" href="?page=auth">Analyze My Resume</a>
   <a class="btn" href="#how">How It Works</a>
 </div>
 """,
@@ -301,9 +301,9 @@ st.markdown(
 <div class="cta">
   <h2>Stop Guessing. Start Improving.</h2>
   <p>Understand exactly how hiring systems interpret your resume.</p><br/>
-  <a class="btn" href="?page=analyzer">Analyze My Resume →</a>
+  <a class="btn" href="?page=auth">Analyze My Resume →</a>
   <p style="font-size:14px;opacity:.85;margin-top:16px;">
-    No login • No data stored • Local processing
+    Optional history • Local processing
   </p>
 </div>
 """,
@@ -322,5 +322,7 @@ st.markdown(
 )
 
 page = st.query_params.get("page")
+if page == "auth":
+    st.switch_page("pages/auth.py")
 if page == "analyzer":
     st.switch_page("pages/analyzer.py")

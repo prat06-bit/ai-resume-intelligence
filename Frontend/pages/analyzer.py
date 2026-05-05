@@ -2,6 +2,7 @@ import os
 import sys
 import warnings
 import importlib.util
+import hashlib
 
 warnings.filterwarnings("ignore")
 
@@ -21,9 +22,24 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 
-from ML_Models.roadmap import generate_roadmap
-from ML_Models.semantic_matcher import SemanticMatcher, compute_score, role_weighted_score
-from ML_Models.skill_extractor import extract_skills, load_skills
+from backend.api.auth_service import decode_token, logout_session
+from backend.core.database import (
+    get_chat_history_by_user_id,
+    get_history_by_user_id,
+    get_user_by_id,
+    init_db,
+    save_chat_message,
+    save_history,
+)
+from backend.ml.recruiter_intelligence import build_recruiter_report, report_to_markdown
+from backend.ml.roadmap import generate_roadmap
+from backend.ml.semantic_matcher import SemanticMatcher, compute_score, role_weighted_score
+from backend.ml.skill_extractor import (
+    extract_skills,
+    extract_skills_by_section,
+    load_skills,
+    parse_resume_sections,
+)
 
 
 ROLE_OPTIONS = [
@@ -50,6 +66,26 @@ SKILL_SPACE_COLORS = [
     "#BBBBBB",
     "#000000",
 ]
+
+
+@st.cache_resource(show_spinner=False)
+def _get_matcher() -> SemanticMatcher:
+    return SemanticMatcher()
+
+
+@st.cache_data(show_spinner=False)
+def _get_skills_db():
+    return load_skills()
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _get_roadmap(missing_skills: tuple[str, ...], score: float, jd_text: str, resume_text: str):
+    return generate_roadmap(
+        missing_skills=list(missing_skills),
+        score=score,
+        jd_text=jd_text,
+        resume_text=resume_text,
+    )
 
 
 def _read_resume_file(uploaded_file) -> str:
@@ -279,7 +315,11 @@ def _matplotlib_skill_space(df: pd.DataFrame, projection: str, dimensions: str):
     return fig
 
 
-def _roadmap_context_response(user_input: str, roadmap: list[dict]) -> str:
+def _roadmap_context_response(
+    user_input: str,
+    roadmap: list[dict],
+    recruiter_report: dict | None = None,
+) -> str:
     if not roadmap:
         return "Your roadmap has no missing-skill steps right now, so focus on strengthening measurable project impact."
 
@@ -289,21 +329,43 @@ def _roadmap_context_response(user_input: str, roadmap: list[dict]) -> str:
     )
     focus = ranked[:3]
     focus_text = ", ".join(step.get("skill", "").replace("_", " ") for step in focus)
+    repeated = []
+    if recruiter_report:
+        repeated = recruiter_report.get("history_summary", {}).get("repeated_gaps", [])
+    repeated_text = ""
+    if repeated:
+        repeated_text = " Repeated gaps from prior analyses should be treated as first-order fixes: " + ", ".join(
+            skill.replace("_", " ") for skill in repeated
+        ) + "."
     if user_input.strip():
-        return f"Based on the generated roadmap, focus first on {focus_text}. Use the action and why fields below each roadmap card as the source of truth for your next resume update."
-    return f"Start with {focus_text}; these are the highest-priority gaps in this analysis."
+        return f"Based on the generated roadmap, focus first on {focus_text}.{repeated_text} Use the action and why fields below each roadmap card as the source of truth for your next resume update."
+    return f"Start with {focus_text}; these are the highest-priority gaps in this analysis.{repeated_text}"
 
 
-def _chat_with_roadmap(prompt: str, roadmap: list[dict]) -> str:
+def _chat_with_roadmap(
+    prompt: str,
+    roadmap: list[dict],
+    recruiter_report: dict,
+    history: list[dict],
+) -> str:
     api_key = os.getenv("NVIDIA_API_KEY")
     if not api_key:
-        return _roadmap_context_response(prompt, roadmap)
+        return _roadmap_context_response(prompt, roadmap, recruiter_report)
 
     roadmap_summary = "\n".join(
         f"- {step.get('skill', '')} ({step.get('priority', '')}): "
         f"{step.get('action', '')} Why: {step.get('why', '')}"
         for step in roadmap
     )
+    report_summary = report_to_markdown(recruiter_report)
+    history_summary = "\n".join(
+        f"- {item.get('timestamp', '')}: score {item.get('score', '')}, missing {', '.join(item.get('missing', [])[:8])}"
+        for item in history[:5]
+    ) or "No stored prior analyses."
+    chat_summary = "\n".join(
+        f"- {message.get('role', '')}: {message.get('content', '')[:220]}"
+        for message in st.session_state.get("roadmap_chat", [])[-6:]
+    ) or "No prior messages in this session."
     try:
         response = requests.post(
             "https://integrate.api.nvidia.com/v1/chat/completions",
@@ -317,8 +379,11 @@ def _chat_with_roadmap(prompt: str, roadmap: list[dict]) -> str:
                     {
                         "role": "system",
                         "content": (
-                            "You are a concise career coach. Ground every answer in this roadmap. "
+                            "You are a concise recruiter and career coach. Ground every answer in the report, history, chat, and roadmap. "
                             "Do not invent skills, employers, projects, courses, or metrics.\n\n"
+                            f"RECRUITER REPORT:\n{report_summary}\n\n"
+                            f"STORED ANALYSIS HISTORY:\n{history_summary}\n\n"
+                            f"SESSION CHAT HISTORY:\n{chat_summary}\n\n"
                             f"ROADMAP:\n{roadmap_summary}"
                         ),
                     },
@@ -332,7 +397,7 @@ def _chat_with_roadmap(prompt: str, roadmap: list[dict]) -> str:
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"].strip()
     except Exception:
-        return _roadmap_context_response(prompt, roadmap)
+        return _roadmap_context_response(prompt, roadmap, recruiter_report)
 
 
 st.set_page_config(page_title="AI Resume Analyzer", layout="wide")
@@ -340,7 +405,44 @@ st.title("AI Resume Analyzer")
 st.caption("Semantic ML - Explainable ATS - Embedding Analysis")
 st.markdown("<style>.stMetric{text-align:center;}</style>", unsafe_allow_html=True)
 
+init_db()
+
+if not st.session_state.get("auth_user"):
+    st.warning("Please sign in or create an account before analyzing a resume.")
+    if st.button("Go to Sign In", use_container_width=True):
+        st.switch_page("pages/auth.py")
+    st.stop()
+
+try:
+    token_payload = decode_token(st.session_state.get("auth_token", ""))
+    auth_user = get_user_by_id(token_payload["user_id"])
+except Exception:
+    auth_user = None
+
+if not auth_user:
+    for key in ("auth_token", "auth_user", "profile_email"):
+        st.session_state.pop(key, None)
+    st.error("Unauthorized access")
+    if st.button("Return to Sign In", use_container_width=True):
+        st.switch_page("pages/auth.py")
+    st.stop()
+
+st.session_state.auth_user = auth_user
+st.caption(f"Signed in as {auth_user['email']}")
+if st.button("Sign out"):
+    try:
+        logout_session(
+            st.session_state.get("auth_token", ""),
+            refresh_token=st.session_state.get("refresh_token"),
+        )
+    except Exception:
+        pass
+    for key in ("auth_token", "refresh_token", "session_id", "auth_user", "profile_email", "roadmap_chat"):
+        st.session_state.pop(key, None)
+    st.switch_page("pages/auth.py")
+
 role = st.selectbox("Target Role", ROLE_OPTIONS)
+profile_email = auth_user["email"].strip().lower()
 
 col1, col2 = st.columns(2)
 
@@ -379,15 +481,22 @@ if not resume_text or len(resume_text.strip()) < 50:
     st.warning("Resume required (min 50 characters). Upload or paste text.")
     st.stop()
 
-matcher = SemanticMatcher()
+matcher = _get_matcher()
+if matcher.using_fallback:
+    st.warning(
+        "PyTorch sentence-transformer embeddings are unavailable on this machine, so the app is using a lightweight local fallback. "
+        "Resume analysis will run, but semantic nuance may be lower until the Torch DLL issue is fixed."
+    )
 try:
-    skills_db = load_skills()
+    skills_db = _get_skills_db()
 except FileNotFoundError as e:
     st.error(str(e))
     st.stop()
 
 resume_skills = sorted(extract_skills(resume_text, skills_db))
 jd_skills = sorted(extract_skills(jd_text, skills_db))
+resume_sections = parse_resume_sections(resume_text)
+skills_by_section = extract_skills_by_section(resume_sections, skills_db)
 
 if not resume_skills and not jd_skills:
     st.error("No skills detected. Ensure resume and JD contain technical terms.")
@@ -427,15 +536,45 @@ metric3.metric("Missing Skills", len(missing))
 st.caption(f"Confidence: {confidence} - Coverage: {matched_count}/{total_jd} JD skills")
 
 try:
-    roadmap = generate_roadmap(
-        missing_skills=list(missing.keys()),
-        score=final_score,
-        jd_text=jd_text,
-        resume_text=resume_text,
-    )
+    roadmap = _get_roadmap(tuple(sorted(missing.keys())), final_score, jd_text, resume_text)
 except Exception as e:
     st.warning(f"Roadmap generation failed: {e}")
     roadmap = []
+
+history = get_history_by_user_id(auth_user["user_id"])
+stored_chat_history = get_chat_history_by_user_id(auth_user["user_id"], limit=12)
+recruiter_report = build_recruiter_report(
+    final_score=final_score,
+    confidence=confidence,
+    skill_score=skill_score,
+    section_score=section_score,
+    coverage_pct=coverage_pct,
+    similarity=similarity,
+    matched=matched,
+    missing=missing,
+    skills_by_section=skills_by_section,
+    section_similarities=section_similarities,
+    roadmap=roadmap,
+    history=history,
+)
+recruiter_markdown = report_to_markdown(recruiter_report)
+
+if profile_email:
+    resume_hash = hashlib.sha256(resume_text.encode("utf-8")).hexdigest()
+    jd_hash = hashlib.sha256(jd_text.encode("utf-8")).hexdigest()
+    save_key = f"{profile_email}:{resume_hash}:{jd_hash}:{final_score}"
+    if st.session_state.get("last_saved_analysis") != save_key:
+        save_history(
+            profile_email,
+            resume_hash,
+            jd_hash,
+            final_score,
+            list(matched.keys()),
+            list(missing.keys()),
+            recruiter_report["score"]["explanation"],
+            user_id=auth_user["user_id"],
+        )
+        st.session_state.last_saved_analysis = save_key
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "Skill Match",
@@ -445,6 +584,10 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 with tab1:
+    st.subheader("Recruiter Intelligence Report")
+    st.markdown(recruiter_markdown)
+    st.divider()
+
     col_a, col_b = st.columns(2)
 
     radar = go.Figure(go.Scatterpolar(
@@ -761,7 +904,7 @@ with tab4:
     st.subheader("Ask About Your Roadmap")
 
     if "roadmap_chat" not in st.session_state:
-        st.session_state.roadmap_chat = []
+        st.session_state.roadmap_chat = stored_chat_history
 
     for message in st.session_state.roadmap_chat:
         with st.chat_message(message["role"]):
@@ -769,8 +912,10 @@ with tab4:
 
     if prompt := st.chat_input("Ask about priority, sequencing, or resume edits..."):
         st.session_state.roadmap_chat.append({"role": "user", "content": prompt})
+        save_chat_message(auth_user["user_id"], "user", prompt)
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                reply = _chat_with_roadmap(prompt, roadmap)
+                reply = _chat_with_roadmap(prompt, roadmap, recruiter_report, history)
             st.markdown(reply)
         st.session_state.roadmap_chat.append({"role": "assistant", "content": reply})
+        save_chat_message(auth_user["user_id"], "assistant", reply)

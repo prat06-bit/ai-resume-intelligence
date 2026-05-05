@@ -1,16 +1,17 @@
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+
+from backend.ml.semantic_matcher import SemanticMatcher
 
 
 class SkillClusterer:
     def __init__(self, n_clusters=4, model_name="all-MiniLM-L6-v2"):
-        self.model = SentenceTransformer(model_name)
+        self.matcher = SemanticMatcher(model_name)
         self.n_clusters = n_clusters
 
     def embed(self, skills):
-        return self.model.encode(skills, normalize_embeddings=True, show_progress_bar=False)
+        return self.matcher.embed(skills)
 
     def reduce_dim(self, embeddings, method="umap", n_components=2):
         embeddings = np.asarray(embeddings, dtype=np.float32)

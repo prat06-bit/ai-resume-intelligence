@@ -2,8 +2,8 @@ import re
 import json
 import os
 from typing import Dict, Set, List
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import HashingVectorizer
 import numpy as np
 
 
@@ -99,15 +99,25 @@ def _semantic_skill_match(terms: List[str], skills_db: Dict[str, Set[str]], thre
         return set()
 
     try:
-        model = SentenceTransformer("all-MiniLM-L6-v2")
+        try:
+            from sentence_transformers import SentenceTransformer
 
-        # Encode terms and skill names
-        term_embeddings = model.encode(terms, normalize_embeddings=True)
+            model = SentenceTransformer("all-MiniLM-L6-v2")
+            term_embeddings = model.encode(terms, normalize_embeddings=True)
+            skill_names = list(skills_db.keys())
+            skill_embeddings = model.encode(skill_names, normalize_embeddings=True)
+        except Exception:
+            vectorizer = HashingVectorizer(
+                n_features=768,
+                alternate_sign=False,
+                norm="l2",
+                analyzer="char_wb",
+                ngram_range=(3, 5),
+            )
+            skill_names = list(skills_db.keys())
+            term_embeddings = vectorizer.transform(terms).toarray()
+            skill_embeddings = vectorizer.transform(skill_names).toarray()
 
-        skill_names = list(skills_db.keys())
-        skill_embeddings = model.encode(skill_names, normalize_embeddings=True)
-
-        # Cosine similarity
         similarities = cosine_similarity(term_embeddings, skill_embeddings)
 
         matched_skills = set()

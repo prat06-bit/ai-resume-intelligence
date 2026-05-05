@@ -1,7 +1,11 @@
+import hashlib
+import json
 from typing import Dict, Set, List
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import HashingVectorizer
 import numpy as np
+
+from backend.core.database import get_cached_embedding, save_cached_embedding
 
 ROLE_WEIGHTS = {
     "software_engineer":   {"projects": 0.4,  "experience": 0.35, "skills": 0.15, "education": 0.1},
@@ -24,34 +28,88 @@ SIM_CEILING = 0.65
 
 
 class SemanticMatcher:
-    """Semantic skill matching using sentence transformers."""
+    """Semantic skill matching with a safe local fallback when torch is unavailable."""
 
     def __init__(self, model_name="all-MiniLM-L6-v2"):
         """Initialize with sentence transformer model."""
         self.model_name = model_name
         self.load_error = None
+        self.using_fallback = False
+        self.vectorizer = HashingVectorizer(
+            n_features=768,
+            alternate_sign=False,
+            norm="l2",
+            analyzer="char_wb",
+            ngram_range=(3, 5),
+        )
         try:
+            from sentence_transformers import SentenceTransformer
+
             self.model = SentenceTransformer(model_name)
         except Exception as e:
             self.model = None
             self.load_error = e
+            self.using_fallback = True
 
-    def embed(self, texts):
+    def _cache_key(self, text: str) -> tuple[str, str]:
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        backend = "sentence_transformer" if self.model is not None else "hashing_vectorizer"
+        return f"{self.model_name}:{backend}:{text_hash}", text_hash
+
+    def _embed_uncached(self, texts):
+        if self.model is not None:
+            try:
+                return self.model.encode(
+                    texts,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                    batch_size=32
+                )
+            except Exception as e:
+                self.load_error = e
+                self.model = None
+                self.using_fallback = True
+
+        return self.vectorizer.transform(texts).toarray().astype(np.float32)
+
+    def embed(self, texts, use_cache=True):
         """Embed list of texts into vectors."""
-        if self.model is None:
-            raise RuntimeError(
-                f"SentenceTransformer model '{self.model_name}' is unavailable: {self.load_error}"
-            )
+        texts = [str(text or "") for text in texts]
+        if not use_cache:
+            return self._embed_uncached(texts)
 
-        try:
-            return self.model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-                batch_size=32
-            )
-        except Exception as e:
-            raise RuntimeError(f"Embedding failed with '{self.model_name}': {e}") from e
+        vectors = []
+        missing_indexes = []
+        missing_texts = []
+
+        for index, text in enumerate(texts):
+            cache_key, _ = self._cache_key(text)
+            cached = get_cached_embedding(cache_key)
+            if cached:
+                vectors.append(np.array(json.loads(cached["vector_json"]), dtype=np.float32))
+            else:
+                vectors.append(None)
+                missing_indexes.append(index)
+                missing_texts.append(text)
+
+        if missing_texts:
+            computed = self._embed_uncached(missing_texts)
+            for offset, index in enumerate(missing_indexes):
+                vector = np.asarray(computed[offset], dtype=np.float32)
+                text = texts[index]
+                cache_key, text_hash = self._cache_key(text)
+                backend = "sentence_transformer" if self.model is not None else "hashing_vectorizer"
+                save_cached_embedding(
+                    cache_key=cache_key,
+                    text_hash=text_hash,
+                    model_name=self.model_name,
+                    backend=backend,
+                    dimensions=int(vector.shape[0]),
+                    vector_json=json.dumps(vector.tolist()),
+                )
+                vectors[index] = vector
+
+        return np.vstack(vectors).astype(np.float32)
 
     def match_skills(self, resume_skills, jd_skills):
         """
